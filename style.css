@@ -137,13 +137,15 @@ h1::before{
 }
 
 /* ===== OUTFIT STRIP (current selections) ===== */
+.outfit-strip:not([hidden]){
+  display: flex;
+}
 .outfit-strip{
   margin: 0 18px 10px;
   padding: 10px 12px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  display: flex;
   align-items: center;
   gap: 10px;
 }
@@ -338,8 +340,11 @@ main{ padding: 4px 18px 0; flex: 1; }
 .modal-backdrop{
   position: fixed; inset: 0;
   background: rgba(10,11,15,0.7);
-  display: flex; align-items: flex-end;
+  align-items: flex-end;
   z-index: 50;
+}
+.modal-backdrop:not([hidden]){
+  display: flex;
 }
 .modal{
   width: 100%;

@@ -589,15 +589,6 @@ function openReviewModal(file, dataUrl, tags){
     dateAdded: Date.now()
   };
 
-  // TEMPORARY DIAGNOSTIC — remove once the blank-field issue is confirmed fixed.
-  const debugEl = document.getElementById("debugInfo");
-  if (debugEl){
-    debugEl.textContent =
-      `MOCK_MODE=${CONFIG.MOCK_MODE} | file.name="${file.name}" | ` +
-      `dataUrl.length=${dataUrl ? dataUrl.length : "null"} | ` +
-      `tags=${JSON.stringify(tags)}`;
-  }
-
   el.modalImg.src = dataUrl;
   el.fieldName.value = tags.name || file.name;
   el.fieldCategory.value = tags.category || "Shirt";
