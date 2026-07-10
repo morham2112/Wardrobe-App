@@ -4,9 +4,9 @@
    working offline, on your phone, with no build step.
 
    FILE MAP OF THIS APP:
-   1. CONFIG               — flip MOCK_MODE off + add your Gemini key
+   1. CONFIG               — flip MOCK_MODE off + add your Claude key
    2. STORAGE (IndexedDB)  — the "database" of clothes lives on your phone
-   3. GEMINI INTAKE        — one AI call per new photo -> structured tags
+   3. CLAUDE INTAKE        — one AI call per new photo -> structured tags
    4. COLOR SCIENCE        — hex/name -> HSL, neutral detection, harmony
    5. THE RULE ENGINE       — Rules A, B, C — this is the "brain"
    6. STATE + RENDERING    — keeps the UI in sync with storage + selection
@@ -18,16 +18,16 @@
    1. CONFIG
    ========================================================================= */
 const CONFIG = {
-  // Set this to false once you've added a real Gemini API key below.
+  // Set this to false once you've added a real Claude API key below.
   // In MOCK_MODE the app invents plausible tags so you can test the UI
   // and the filtering engine without spending API calls or being online.
-  MOCK_MODE: false,
+  MOCK_MODE: true,
 
-  GEMINI_API_KEY: "AQ.Ab8RN6IbG-lBymBSWF2BVoPnTR3r5oMRMqcx1Dryt-e8VdwFuA",
-  GEMINI_MODEL: "gemini-3.5-flash",
+  CLAUDE_API_KEY: "YOUR_CLAUDE_API_KEY_HERE",
+  CLAUDE_MODEL: "claude-haiku-4-5-20251001",
 
   // Neutral colors pair with everything (Rule A). Add to this list if
-  // Gemini (or you) describe a color in a way that isn't caught below.
+  // Claude (or you) describe a color in a way that isn't caught below.
   NEUTRAL_KEYWORDS: ["black","white","gray","grey","navy","tan","beige","cream","charcoal","khaki","stone","ivory"]
 };
 
@@ -42,7 +42,7 @@ const CATEGORIES = ["Hat","Shirt","Bottom","Belt","Sock","Shoe"];
    Each clothing item is stored as:
    { id, filename, name, category, exact_color, tone, formality, imageData, dateAdded }
    imageData is a base64 data-URL, so photos are self-contained — nothing
-   ever leaves your phone unless you turn MOCK_MODE off to call Gemini.
+   ever leaves your phone unless you turn MOCK_MODE off to call Claude.
    ========================================================================= */
 const DB_NAME = "outfit-line";
 const STORE = "clothes";
@@ -96,12 +96,13 @@ async function dbDelete(id){
 
 
 /* =========================================================================
-   3. GEMINI INTAKE
-   This runs ONCE per new photo. It sends the image + a schema prompt to
-   Gemini and expects strict JSON back. Swap MOCK_MODE off and fill in
-   CONFIG.GEMINI_API_KEY to make it live.
+   3. CLAUDE INTAKE
+   This runs ONCE per new photo. It sends the image to Claude and forces a
+   structured tool call back, so every field (name, category, color, tone,
+   formality) is guaranteed present — Claude can't skip one the way it
+   could when just asked to write JSON as text.
 
-   ⚠️ Security note: calling Gemini directly from a client-side app means
+   ⚠️ Security note: calling the API directly from a client-side app means
    your API key ships inside app.js. That's fine for a private tool only
    you install on your own phone, but do NOT publish this app publicly
    with a real key embedded — route it through a small server/proxy first
@@ -113,62 +114,61 @@ async function analyzeClothingImage(file, dataUrl){
   }
 
   const base64 = dataUrl.split(",")[1];
-  const prompt = `You are tagging a single clothing item photo for a wardrobe app.
-Look closely at the item and give it a short, descriptive name that combines
-its color and what it is (e.g. "Navy Golf Shorts", "White No-Show Socks",
-"Brown Leather Belt"). Be specific about cut/style in the name whenever it's
-visible (e.g. "shorts" vs "pants", "crew socks" vs "no-show socks") since
-that wording drives some of the app's styling rules.`;
+  const prompt = `Look closely at this clothing item photo and tag it for a wardrobe app.
+Give it a short, descriptive name that combines its color and what it is
+(e.g. "Navy Golf Shorts", "White No-Show Socks", "Brown Leather Belt"). Be
+specific about cut/style whenever it's visible (e.g. "shorts" vs "pants",
+"crew socks" vs "no-show socks") since that wording drives some of the
+app's styling rules. Use the tag_clothing_item tool to record your answer.`;
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${CONFIG.GEMINI_MODEL}:generateContent`;
-
-  const body = {
-    contents: [{
-      parts: [
-        { text: prompt },
-        { inline_data: { mime_type: file.type || "image/jpeg", data: base64 } }
-      ]
-    }],
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "OBJECT",
-        properties: {
-          name: { type: "STRING" },
-          category: { type: "STRING", enum: CATEGORIES },
-          exact_color: { type: "STRING" },
-          tone: { type: "STRING", enum: ["Light","Dark","Neutral"] },
-          formality: { type: "STRING", enum: ["Casual","Sport","Dressy"] }
-        },
-        required: ["name","category","exact_color","tone","formality"]
-      }
-    }
-  };
-
-  const res = await fetch(url, {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": CONFIG.GEMINI_API_KEY
+      "content-type": "application/json",
+      "x-api-key": CONFIG.CLAUDE_API_KEY,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true"
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify({
+      model: CONFIG.CLAUDE_MODEL,
+      max_tokens: 300,
+      tools: [{
+        name: "tag_clothing_item",
+        description: "Record structured tags for a single clothing item photo.",
+        input_schema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Short descriptive name combining color and item type." },
+            category: { type: "string", enum: CATEGORIES },
+            exact_color: { type: "string", description: "A CSS hex code like #1B3A6B." },
+            tone: { type: "string", enum: ["Light","Dark","Neutral"] },
+            formality: { type: "string", enum: ["Casual","Sport","Dressy"] }
+          },
+          required: ["name","category","exact_color","tone","formality"]
+        }
+      }],
+      tool_choice: { type: "tool", name: "tag_clothing_item" },
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: file.type || "image/jpeg", data: base64 } },
+          { type: "text", text: prompt }
+        ]
+      }]
+    })
   });
 
   if (!res.ok){
     const errText = await res.text().catch(() => "");
-    throw new Error(`Gemini request failed: ${res.status} ${errText}`);
+    throw new Error(`Claude request failed: ${res.status} ${errText}`);
   }
 
   const data = await res.json();
-  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-  const clean = raw.replace(/```json|```/g, "").trim();
-
-  try{
-    return JSON.parse(clean);
-  }catch(e){
-    console.error("Could not parse Gemini response, falling back to mock:", raw);
-    return mockAnalyze(file.name);
+  const toolCall = data.content?.find(block => block.type === "tool_use");
+  if (!toolCall){
+    throw new Error("Claude didn't return a tool call — check the response shape.");
   }
+  return toolCall.input; // already a clean, schema-matching object — no JSON parsing needed
 }
 
 // Deterministic "fake AI" so the same filename always gets the same mock
@@ -290,7 +290,7 @@ function formalityCompatible(a, b){
    5. THE RULE ENGINE
    Heuristics for shorts / socks / belts read the item's NAME (e.g. name
    your photo "White No-Show Socks.jpg" or "Brown Leather Belt.jpg") since
-   the Gemini schema doesn't include a sub-type field. Rename items in the
+   the Claude schema doesn't include a sub-type field. Rename items in the
    review modal any time to steer these checks.
    ========================================================================= */
 const isShort      = item => /short/i.test(item.name);
@@ -724,4 +724,3 @@ if ("serviceWorker" in navigator){
   state.loaded = true;
   render();
 })();
-
