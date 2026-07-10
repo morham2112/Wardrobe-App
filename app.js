@@ -375,6 +375,7 @@ function evaluateCandidate(selection, candidate){
    ========================================================================= */
 const state = {
   items: [],
+  loaded: false,
   activeTab: "All",
   selection: { Shirt: null, Bottom: null, Shoe: null, Accessory: new Set() }
 };
@@ -433,8 +434,12 @@ function render(){
 
 function updateStatusLine(){
   const count = state.items.length;
+  if (!state.loaded){
+    el.statusLine.textContent = "Loading your closet…";
+    return;
+  }
   el.statusLine.textContent = count === 0
-    ? "Loading your closet…"
+    ? "Your closet is empty — tap + Add to get started"
     : `${count} item${count === 1 ? "" : "s"} in your closet — tap anything to build an outfit`;
 }
 
@@ -527,28 +532,42 @@ el.fileInput.addEventListener("change", async (e) => {
   if (!files.length) return;
 
   const existingNames = new Set(state.items.map(i => i.filename));
+  const newFiles = files.filter(f => !existingNames.has(f.name)); // dedupe: already in the closet
 
-  for (const file of files){
-    if (existingNames.has(file.name)) continue; // dedupe: already in the closet
-
-    el.statusLine.textContent = `Analyzing ${file.name}…`;
-    const dataUrl = await fileToDataUrl(file);
-
-    let tags;
-    try{
-      tags = await analyzeClothingImage(file, dataUrl);
-    }catch(err){
-      console.error(err);
-      el.statusLine.textContent = `Couldn't analyze ${file.name} — skipped`;
-      continue;
-    }
-
-    openReviewModal(file, dataUrl, tags);
-    break; // review one at a time; re-open Add for the next photo
+  if (!newFiles.length){
+    el.statusLine.textContent = "Those photos are already in your closet";
+    setTimeout(updateStatusLine, 1800);
+    return;
   }
 
-  updateStatusLine();
+  reviewQueue.push(...newFiles);
+  processNextInQueue();
 });
+
+const reviewQueue = [];
+
+async function processNextInQueue(){
+  if (el.modalBackdrop.hidden === false) return; // a review is already open
+  const file = reviewQueue.shift();
+  if (!file) { updateStatusLine(); return; }
+
+  el.statusLine.textContent = `Analyzing ${file.name}…`;
+  const dataUrl = await fileToDataUrl(file);
+
+  let tags;
+  try{
+    tags = await analyzeClothingImage(file, dataUrl);
+    if (!tags || typeof tags !== "object"){
+      throw new Error("AI response was not a usable object");
+    }
+  }catch(err){
+    console.error("Tagging failed for", file.name, err);
+    el.statusLine.textContent = `Couldn't fully analyze ${file.name} — check details before saving`;
+    tags = {}; // openReviewModal below still fills in safe fallbacks per-field
+  }
+
+  openReviewModal(file, dataUrl, tags);
+}
 
 function fileToDataUrl(file){
   return new Promise((resolve, reject) => {
@@ -581,6 +600,7 @@ function openReviewModal(file, dataUrl, tags){
 function closeReviewModal(){
   el.modalBackdrop.hidden = true;
   pendingItem = null;
+  processNextInQueue();
 }
 
 el.modalCancel.addEventListener("click", closeReviewModal);
@@ -591,7 +611,7 @@ el.modalSave.addEventListener("click", async () => {
     ...pendingItem,
     name: el.fieldName.value.trim() || pendingItem.filename,
     category: el.fieldCategory.value,
-    exact_color: el.fieldColor.value.trim(),
+    exact_color: el.fieldColor.value.trim() || "#888888",
     tone: el.fieldTone.value,
     formality: el.fieldFormality.value
   };
@@ -621,5 +641,6 @@ if ("serviceWorker" in navigator){
    ========================================================================= */
 (async function init(){
   state.items = await dbGetAll();
+  state.loaded = true;
   render();
 })();
