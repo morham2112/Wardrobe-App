@@ -21,7 +21,7 @@ const CONFIG = {
   // Set this to false once you've added a real Gemini API key below.
   // In MOCK_MODE the app invents plausible tags so you can test the UI
   // and the filtering engine without spending API calls or being online.
-  MOCK_MODE: true,
+  MOCK_MODE: false,
 
   GEMINI_API_KEY: "AQ.Ab8RN6IbG-lBymBSWF2BVoPnTR3r5oMRMqcx1Dryt-e8VdwFuA",
   GEMINI_MODEL: "gemini-3.5-flash",
