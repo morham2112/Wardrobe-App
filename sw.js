@@ -10,7 +10,7 @@
    stale cached copies.
    ========================================================================= */
 
-const CACHE_NAME = "outfit-line-v10";
+const CACHE_NAME = "outfit-line-v11";
 const APP_SHELL = [
   "./",
   "./index.html",
