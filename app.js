@@ -23,7 +23,7 @@ const CONFIG = {
   // and the filtering engine without spending API calls or being online.
   MOCK_MODE: true,
 
-  GEMINI_API_KEY: "YOUR_GEMINI_API_KEY_HERE",
+  GEMINI_API_KEY: "AQ.Ab8RN6IbG-lBymBSWF2BVoPnTR3r5oMRMqcx1Dryt-e8VdwFuA",
   GEMINI_MODEL: "gemini-3.5-flash",
 
   // Neutral colors pair with everything (Rule A). Add to this list if
