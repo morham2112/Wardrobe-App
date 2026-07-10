@@ -31,6 +31,11 @@ const CONFIG = {
   NEUTRAL_KEYWORDS: ["black","white","gray","grey","navy","tan","beige","cream","charcoal","khaki","stone","ivory"]
 };
 
+// Single source of truth for categories — matches the tabs and the
+// Category dropdown in index.html. Keep these in sync if you ever add
+// or rename a category.
+const CATEGORIES = ["Hat","Shirt","Bottom","Belt","Sock","Shoe"];
+
 
 /* =========================================================================
    2. STORAGE — a tiny IndexedDB wrapper.
@@ -110,7 +115,7 @@ async function analyzeClothingImage(file, dataUrl){
   const base64 = dataUrl.split(",")[1];
   const prompt = `You are tagging a single clothing item photo for a wardrobe app.
 Return ONLY raw JSON, no markdown fences, matching exactly this shape:
-{"name": string, "category": "Shirt"|"Bottom"|"Shoe"|"Accessory", "exact_color": string (a CSS hex code like "#1B3A6B"), "tone": "Light"|"Dark"|"Neutral", "formality": "Casual"|"Sport"|"Dressy"}`;
+{"name": string, "category": "Hat"|"Shirt"|"Bottom"|"Belt"|"Sock"|"Shoe", "exact_color": string (a CSS hex code like "#1B3A6B"), "tone": "Light"|"Dark"|"Neutral", "formality": "Casual"|"Sport"|"Dressy"}`;
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${CONFIG.GEMINI_MODEL}:generateContent?key=${CONFIG.GEMINI_API_KEY}`;
 
@@ -148,7 +153,6 @@ Return ONLY raw JSON, no markdown fences, matching exactly this shape:
 // Deterministic "fake AI" so the same filename always gets the same mock
 // tags — handy for testing the rule engine before you wire up a real key.
 function mockAnalyze(filename){
-  const categories = ["Shirt","Bottom","Shoe","Accessory"];
   const colors = [
     { name: "Navy",        hex: "#1B3A6B", tone: "Neutral" },
     { name: "Charcoal",    hex: "#333333", tone: "Neutral" },
@@ -162,7 +166,7 @@ function mockAnalyze(filename){
   const formalities = ["Casual","Sport","Dressy"];
 
   const hash = [...filename].reduce((a,c)=>a + c.charCodeAt(0), 0);
-  const cat = categories[hash % categories.length];
+  const cat = CATEGORIES[hash % CATEGORIES.length];
   const color = colors[hash % colors.length];
   const formality = formalities[(hash >> 2) % formalities.length];
 
@@ -269,10 +273,8 @@ function formalityCompatible(a, b){
    review modal any time to steer these checks.
    ========================================================================= */
 const isShort      = item => /short/i.test(item.name);
-const isSock       = item => /sock/i.test(item.name);
 const isNoShowSock = item => /(no.?show|ankle|low|invisible|hidden)/i.test(item.name);
 const isHighSock   = item => /(crew|high|knee|tall|calf)/i.test(item.name);
-const isBelt       = item => /belt/i.test(item.name);
 
 // RULE B — height elongation. Checks the candidate item against whatever
 // is currently selected (bottoms + shirt) to protect an unbroken vertical line.
@@ -293,7 +295,7 @@ function heightElongation(selection, candidate){
   }
 
   // Shorts -> socks: no-show/skin-tone only, high socks chop the leg.
-  if (candidate.category === "Accessory" && isSock(candidate) && selection.Bottom && isShort(selection.Bottom)){
+  if (candidate.category === "Sock" && selection.Bottom && isShort(selection.Bottom)){
     if (isHighSock(candidate)){
       ok = false;
       reasons.push("High socks chop the leg line with shorts — try no-show");
@@ -302,7 +304,7 @@ function heightElongation(selection, candidate){
 
   // Belts: must match bottoms/shirt color, unless the shirt is casual/sport
   // (and therefore likely worn untucked, so the belt is hidden anyway).
-  if (candidate.category === "Accessory" && isBelt(candidate)){
+  if (candidate.category === "Belt"){
     const refs = [selection.Bottom, selection.Shirt].filter(Boolean);
     if (refs.length){
       const likelyUntucked = selection.Shirt && ["Casual","Sport"].includes(selection.Shirt.formality);
@@ -324,17 +326,12 @@ function heightElongation(selection, candidate){
 
 // Master check: is `candidate` compatible with everything currently selected?
 // Only compares against OTHER categories (an item never locks its own category).
+// Every category is single-select now, so this is just "every selected item
+// in a different category" — no more special-casing a multi-select bucket.
 function evaluateCandidate(selection, candidate){
-  const refs = [];
-  if (selection.Shirt && candidate.category !== "Shirt") refs.push(selection.Shirt);
-  if (selection.Bottom && candidate.category !== "Bottom") refs.push(selection.Bottom);
-  if (selection.Shoe && candidate.category !== "Shoe") refs.push(selection.Shoe);
-  if (candidate.category !== "Accessory"){
-    selection.Accessory.forEach(acc => refs.push(acc));
-  } else {
-    // other selected accessories should still harmonize with a new one
-    selection.Accessory.forEach(acc => { if (acc.id !== candidate.id) refs.push(acc); });
-  }
+  const refs = Object.entries(selection)
+    .filter(([cat, item]) => item && cat !== candidate.category)
+    .map(([, item]) => item);
 
   if (refs.length === 0) return { locked: false, reasons: [], badges: [] };
 
@@ -373,11 +370,17 @@ function evaluateCandidate(selection, candidate){
 /* =========================================================================
    6. STATE + RENDERING
    ========================================================================= */
+function emptySelection(){
+  const sel = {};
+  CATEGORIES.forEach(cat => { sel[cat] = null; });
+  return sel;
+}
+
 const state = {
   items: [],
   loaded: false,
   activeTab: "All",
-  selection: { Shirt: null, Bottom: null, Shoe: null, Accessory: new Set() }
+  selection: emptySelection()
 };
 
 const el = {
@@ -404,26 +407,16 @@ const el = {
 };
 
 function selectedList(){
-  const list = [state.selection.Shirt, state.selection.Bottom, state.selection.Shoe]
-    .filter(Boolean);
-  return list.concat([...state.selection.Accessory]);
+  return Object.values(state.selection).filter(Boolean);
 }
 
 function isSelected(item){
-  if (item.category === "Accessory") return state.selection.Accessory.has(item.id) ||
-    [...state.selection.Accessory].some(a => a.id === item.id);
   return state.selection[item.category]?.id === item.id;
 }
 
 function toggleSelect(item){
-  if (item.category === "Accessory"){
-    const existing = [...state.selection.Accessory].find(a => a.id === item.id);
-    if (existing) state.selection.Accessory.delete(existing);
-    else state.selection.Accessory.add(item);
-  } else {
-    const current = state.selection[item.category];
-    state.selection[item.category] = (current && current.id === item.id) ? null : item;
-  }
+  const current = state.selection[item.category];
+  state.selection[item.category] = (current && current.id === item.id) ? null : item;
   renderGrid();
   renderOutfitStrip();
 }
@@ -530,7 +523,7 @@ el.tabs.addEventListener("click", (e) => {
 
 // --- Clear outfit ---
 el.clearOutfitBtn.addEventListener("click", () => {
-  state.selection = { Shirt: null, Bottom: null, Shoe: null, Accessory: new Set() };
+  state.selection = emptySelection();
   render();
 });
 
@@ -602,10 +595,10 @@ function openReviewModal(file, dataUrl, tags){
     dateAdded: Date.now()
   };
 
-  el.modalTitle.textContent = "Confirm item details";
+  if (el.modalTitle) el.modalTitle.textContent = "Confirm item details";
   el.modalSave.textContent = "Save to closet";
   el.modalCancel.textContent = "Skip";
-  el.modalDelete.hidden = true;
+  if (el.modalDelete) el.modalDelete.hidden = true;
 
   el.modalImg.src = dataUrl;
   el.fieldName.value = tags.name || file.name;
@@ -620,10 +613,10 @@ function openEditModal(item){
   pendingItem = null;
   editingItemId = item.id;
 
-  el.modalTitle.textContent = "Edit item";
+  if (el.modalTitle) el.modalTitle.textContent = "Edit item";
   el.modalSave.textContent = "Save changes";
   el.modalCancel.textContent = "Cancel";
-  el.modalDelete.hidden = false;
+  if (el.modalDelete) el.modalDelete.hidden = false;
 
   el.modalImg.src = item.imageData;
   el.fieldName.value = item.name;
@@ -643,18 +636,19 @@ function closeReviewModal(){
 
 el.modalCancel.addEventListener("click", closeReviewModal);
 
-el.modalDelete.addEventListener("click", async () => {
-  if (!editingItemId) return;
-  if (!confirm("Remove this item from your closet?")) return;
-  await dbDelete(editingItemId);
-  state.items = state.items.filter(i => i.id !== editingItemId);
-  if (state.selection.Shirt?.id === editingItemId) state.selection.Shirt = null;
-  if (state.selection.Bottom?.id === editingItemId) state.selection.Bottom = null;
-  if (state.selection.Shoe?.id === editingItemId) state.selection.Shoe = null;
-  [...state.selection.Accessory].forEach(a => { if (a.id === editingItemId) state.selection.Accessory.delete(a); });
-  closeReviewModal();
-  render();
-});
+if (el.modalDelete){
+  el.modalDelete.addEventListener("click", async () => {
+    if (!editingItemId) return;
+    if (!confirm("Remove this item from your closet?")) return;
+    await dbDelete(editingItemId);
+    state.items = state.items.filter(i => i.id !== editingItemId);
+    for (const cat of CATEGORIES){
+      if (state.selection[cat]?.id === editingItemId) state.selection[cat] = null;
+    }
+    closeReviewModal();
+    render();
+  });
+}
 
 el.modalSave.addEventListener("click", async () => {
   if (!pendingItem && !editingItemId) return;
@@ -672,11 +666,10 @@ el.modalSave.addEventListener("click", async () => {
     const updated = { ...existing, ...fields };
     await dbPut(updated);
     state.items = state.items.map(i => i.id === editingItemId ? updated : i);
-    // keep selection strip in sync if this item is currently selected
-    if (state.selection.Shirt?.id === editingItemId) state.selection.Shirt = updated;
-    if (state.selection.Bottom?.id === editingItemId) state.selection.Bottom = updated;
-    if (state.selection.Shoe?.id === editingItemId) state.selection.Shoe = updated;
-    state.selection.Accessory.forEach(a => { if (a.id === editingItemId) Object.assign(a, updated); });
+    // keep the outfit strip in sync if this item is currently selected
+    for (const cat of CATEGORIES){
+      if (state.selection[cat]?.id === editingItemId) state.selection[cat] = updated;
+    }
   } else {
     const item = { ...pendingItem, ...fields };
     await dbPut(item);
