@@ -114,8 +114,11 @@ async function analyzeClothingImage(file, dataUrl){
 
   const base64 = dataUrl.split(",")[1];
   const prompt = `You are tagging a single clothing item photo for a wardrobe app.
-Return ONLY raw JSON, no markdown fences, matching exactly this shape:
-{"name": string, "category": "Hat"|"Shirt"|"Bottom"|"Belt"|"Sock"|"Shoe", "exact_color": string (a CSS hex code like "#1B3A6B"), "tone": "Light"|"Dark"|"Neutral", "formality": "Casual"|"Sport"|"Dressy"}`;
+Look closely at the item and give it a short, descriptive name that combines
+its color and what it is (e.g. "Navy Golf Shorts", "White No-Show Socks",
+"Brown Leather Belt"). Be specific about cut/style in the name whenever it's
+visible (e.g. "shorts" vs "pants", "crew socks" vs "no-show socks") since
+that wording drives some of the app's styling rules.`;
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${CONFIG.GEMINI_MODEL}:generateContent`;
 
@@ -125,7 +128,21 @@ Return ONLY raw JSON, no markdown fences, matching exactly this shape:
         { text: prompt },
         { inline_data: { mime_type: file.type || "image/jpeg", data: base64 } }
       ]
-    }]
+    }],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: "OBJECT",
+        properties: {
+          name: { type: "STRING" },
+          category: { type: "STRING", enum: CATEGORIES },
+          exact_color: { type: "STRING" },
+          tone: { type: "STRING", enum: ["Light","Dark","Neutral"] },
+          formality: { type: "STRING", enum: ["Casual","Sport","Dressy"] }
+        },
+        required: ["name","category","exact_color","tone","formality"]
+      }
+    }
   };
 
   const res = await fetch(url, {
