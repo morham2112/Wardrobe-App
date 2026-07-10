@@ -391,6 +391,7 @@ const el = {
   fileInput: document.getElementById("fileInput"),
   addPhotosBtn: document.getElementById("addPhotosBtn"),
   modalBackdrop: document.getElementById("modalBackdrop"),
+  modalTitle: document.getElementById("modalTitle"),
   modalImg: document.getElementById("modalImg"),
   fieldName: document.getElementById("fieldName"),
   fieldCategory: document.getElementById("fieldCategory"),
@@ -398,7 +399,8 @@ const el = {
   fieldTone: document.getElementById("fieldTone"),
   fieldFormality: document.getElementById("fieldFormality"),
   modalSave: document.getElementById("modalSave"),
-  modalCancel: document.getElementById("modalCancel")
+  modalCancel: document.getElementById("modalCancel"),
+  modalDelete: document.getElementById("modalDelete")
 };
 
 function selectedList(){
@@ -454,10 +456,11 @@ function renderGrid(){
   const selection = state.selection;
 
   items.forEach(item => {
-    const card = document.createElement("button");
+    const card = document.createElement("div");
     card.className = "item";
-    card.type = "button";
     card.dataset.id = item.id;
+    card.setAttribute("role", "button");
+    card.setAttribute("tabindex", "0");
 
     let locked = false, badges = [];
     if (selectedList().length > 0 && !isSelected(item)){
@@ -471,6 +474,7 @@ function renderGrid(){
     if (badges.length) card.classList.add("recommended");
 
     card.innerHTML = `
+      <button type="button" class="item-edit-btn" title="Edit ${escapeHtml(item.name)}">✎</button>
       <div class="item-photo-wrap">
         <img src="${item.imageData}" alt="${escapeHtml(item.name)}">
         ${badges.includes("elongate") ? '<span class="badge elongate">Elongates</span>' : ""}
@@ -480,7 +484,14 @@ function renderGrid(){
       <div class="item-meta">${item.formality} · ${item.tone}</div>
     `;
 
+    card.querySelector(".item-edit-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openEditModal(item);
+    });
     card.addEventListener("click", () => toggleSelect(item));
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " "){ e.preventDefault(); toggleSelect(item); }
+    });
     el.grid.appendChild(card);
   });
 }
@@ -579,15 +590,22 @@ function fileToDataUrl(file){
 }
 
 // --- Review modal ---
-let pendingItem = null;
+let pendingItem = null;   // set while reviewing a brand-new photo
+let editingItemId = null; // set while editing an already-saved item
 
 function openReviewModal(file, dataUrl, tags){
+  editingItemId = null;
   pendingItem = {
     id: `${file.name}-${Date.now()}`,
     filename: file.name,
     imageData: dataUrl,
     dateAdded: Date.now()
   };
+
+  el.modalTitle.textContent = "Confirm item details";
+  el.modalSave.textContent = "Save to closet";
+  el.modalCancel.textContent = "Skip";
+  el.modalDelete.hidden = true;
 
   el.modalImg.src = dataUrl;
   el.fieldName.value = tags.name || file.name;
@@ -598,26 +616,73 @@ function openReviewModal(file, dataUrl, tags){
   el.modalBackdrop.hidden = false;
 }
 
+function openEditModal(item){
+  pendingItem = null;
+  editingItemId = item.id;
+
+  el.modalTitle.textContent = "Edit item";
+  el.modalSave.textContent = "Save changes";
+  el.modalCancel.textContent = "Cancel";
+  el.modalDelete.hidden = false;
+
+  el.modalImg.src = item.imageData;
+  el.fieldName.value = item.name;
+  el.fieldCategory.value = item.category;
+  el.fieldColor.value = item.exact_color;
+  el.fieldTone.value = item.tone;
+  el.fieldFormality.value = item.formality;
+  el.modalBackdrop.hidden = false;
+}
+
 function closeReviewModal(){
   el.modalBackdrop.hidden = true;
   pendingItem = null;
+  editingItemId = null;
   processNextInQueue();
 }
 
 el.modalCancel.addEventListener("click", closeReviewModal);
 
+el.modalDelete.addEventListener("click", async () => {
+  if (!editingItemId) return;
+  if (!confirm("Remove this item from your closet?")) return;
+  await dbDelete(editingItemId);
+  state.items = state.items.filter(i => i.id !== editingItemId);
+  if (state.selection.Shirt?.id === editingItemId) state.selection.Shirt = null;
+  if (state.selection.Bottom?.id === editingItemId) state.selection.Bottom = null;
+  if (state.selection.Shoe?.id === editingItemId) state.selection.Shoe = null;
+  [...state.selection.Accessory].forEach(a => { if (a.id === editingItemId) state.selection.Accessory.delete(a); });
+  closeReviewModal();
+  render();
+});
+
 el.modalSave.addEventListener("click", async () => {
-  if (!pendingItem) return;
-  const item = {
-    ...pendingItem,
-    name: el.fieldName.value.trim() || pendingItem.filename,
+  if (!pendingItem && !editingItemId) return;
+
+  const fields = {
+    name: el.fieldName.value.trim() || (pendingItem?.filename ?? "Untitled item"),
     category: el.fieldCategory.value,
     exact_color: el.fieldColor.value.trim() || "#888888",
     tone: el.fieldTone.value,
     formality: el.fieldFormality.value
   };
-  await dbPut(item);
-  state.items.push(item);
+
+  if (editingItemId){
+    const existing = state.items.find(i => i.id === editingItemId);
+    const updated = { ...existing, ...fields };
+    await dbPut(updated);
+    state.items = state.items.map(i => i.id === editingItemId ? updated : i);
+    // keep selection strip in sync if this item is currently selected
+    if (state.selection.Shirt?.id === editingItemId) state.selection.Shirt = updated;
+    if (state.selection.Bottom?.id === editingItemId) state.selection.Bottom = updated;
+    if (state.selection.Shoe?.id === editingItemId) state.selection.Shoe = updated;
+    state.selection.Accessory.forEach(a => { if (a.id === editingItemId) Object.assign(a, updated); });
+  } else {
+    const item = { ...pendingItem, ...fields };
+    await dbPut(item);
+    state.items.push(item);
+  }
+
   closeReviewModal();
   render();
 });
