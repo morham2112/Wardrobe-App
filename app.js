@@ -24,7 +24,7 @@ const CONFIG = {
   MOCK_MODE: false,
 
   GEMINI_API_KEY: "AQ.Ab8RN6IbG-lBymBSWF2BVoPnTR3r5oMRMqcx1Dryt-e8VdwFuA",
-  GEMINI_MODEL: "gemini-1.5-flash",
+  GEMINI_MODEL: "gemini-3.5-flash",
 
   // Neutral colors pair with everything (Rule A). Add to this list if
   // Gemini (or you) describe a color in a way that isn't caught below.
