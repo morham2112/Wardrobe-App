@@ -20,9 +20,9 @@ const CONFIG = {
   // Set this to false once you've added a real Claude API key below.
   // In MOCK_MODE the app invents plausible tags/outfits so you can test
   // the UI without spending API calls or being online.
-  MOCK_MODE: false,
+  MOCK_MODE: true,
 
-  CLAUDE_API_KEY: "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",
+  CLAUDE_API_KEY: "YOUR_CLAUDE_API_KEY_HERE",
 
   // Cheap/fast model for simple per-photo tagging.
   CLAUDE_MODEL: "claude-haiku-4-5-20251001",
@@ -219,7 +219,7 @@ function mockAnalyze(filename){
    guarantee a clean, parseable answer — forcing structured output on the
    first call would prevent it from searching at all.
    ========================================================================= */
-async function suggestOutfits(anchorItems){
+async function suggestOutfits(anchorItems, occasion){
   if (CONFIG.MOCK_MODE){
     return mockSuggestOutfits(anchorItems);
   }
@@ -233,10 +233,14 @@ async function suggestOutfits(anchorItems){
     ? anchorItems.map(i => `${i.name} (${i.category}, ${i.exact_color})`).join(", ")
     : null;
 
+  const occasionDesc = occasion ? occasion.hint : null;
+
   // --- Call 1: research ---
-  const researchPrompt = anchorDesc
-    ? `I'm putting together an outfit built around: ${anchorDesc}. Briefly research current men's styling conventions relevant to these pieces — 2-3 sentences, this is just context for a follow-up step, not a final answer.`
-    : `I want a few complete men's outfit ideas for today, business-casual-or-more-relaxed. Briefly research current styling trends — 2-3 sentences, this is just context for a follow-up step, not a final answer.`;
+  const researchPrompt = [
+    occasionDesc ? `I want to put together ${occasionDesc}.` : "I want a few complete men's outfit ideas for today.",
+    anchorDesc ? `It should be built around: ${anchorDesc}.` : "",
+    "Briefly research current men's styling conventions relevant to this — 2-3 sentences, this is just context for a follow-up step, not a final answer."
+  ].filter(Boolean).join(" ");
 
   const researchRes = await fetch(CLAUDE_API_URL, {
     method: "POST",
@@ -264,6 +268,7 @@ async function suggestOutfits(anchorItems){
 
 My full closet inventory (JSON): ${JSON.stringify(inventory)}
 
+${occasionDesc ? `The goal is specifically ${occasionDesc}. Every outfit should fit that occasion.` : ""}
 ${anchorDesc ? `Build every outfit around these specific items (match by id): ${anchorItems.map(i => i.id).join(", ")}.` : ""}
 Using ONLY items from the inventory above — never invent an item, only reference the exact ids provided — propose 3 to 4 complete outfits. Pick at most one item per category per outfit. I'm a shorter man who is colorblind, so prioritize outfits with a clean, unbroken vertical line (monochromatic or low-contrast pairings work best) and safe, unambiguous color combinations. Give each outfit a one-sentence rationale. Use the propose_outfits tool to answer.`;
 
@@ -318,6 +323,16 @@ Using ONLY items from the inventory above — never invent an item, only referen
     .filter(o => o.items.length > 0);
 }
 
+// Quick one-tap occasion presets. Each just biases the research + compose
+// prompts above toward a specific kind of look — same underlying flow.
+const OCCASION_PRESETS = [
+  { id: "golf-shorts", label: "⛳ Golf (Shorts)", hint: "a golf outfit using golf shorts (not pants) as the bottom, with appropriate golf-style top, shoes, and accessories" },
+  { id: "golf-pants",  label: "⛳ Golf (Pants)",  hint: "a golf outfit using golf pants (not shorts) as the bottom, with appropriate golf-style top, shoes, and accessories" },
+  { id: "business",    label: "💼 Business Casual", hint: "a business casual outfit suitable for an office that isn't full formal" },
+  { id: "casual",      label: "👕 Casual",         hint: "a relaxed, everyday casual outfit" },
+  { id: "dinner",      label: "🍽️ Nice Dinner",   hint: "a polished outfit appropriate for a nice dinner out, dressier than casual but not black-tie" }
+];
+
 function claudeHeaders(){
   return {
     "content-type": "application/json",
@@ -331,7 +346,7 @@ const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
 
 // Mock version so the suggestion UI is testable without an API key —
 // just randomly assembles a few outfits from whatever's in the closet.
-function mockSuggestOutfits(anchorItems){
+function mockSuggestOutfits(anchorItems, occasion){
   const byCategory = {};
   CATEGORIES.forEach(cat => { byCategory[cat] = state.items.filter(i => i.category === cat); });
   const anchorCats = new Set(anchorItems.map(i => i.category));
@@ -377,6 +392,7 @@ const el = {
   outfitStripItems: document.getElementById("outfitStripItems"),
   clearOutfitBtn: document.getElementById("clearOutfitBtn"),
   suggestBtn: document.getElementById("suggestOutfitsBtn"),
+  occasionBar: document.getElementById("occasionBar"),
   suggestBackdrop: document.getElementById("suggestBackdrop"),
   suggestList: document.getElementById("suggestList"),
   suggestStatus: document.getElementById("suggestStatus"),
@@ -504,17 +520,25 @@ el.clearOutfitBtn.addEventListener("click", () => {
   render();
 });
 
+function renderOccasionBar(){
+  el.occasionBar.innerHTML = OCCASION_PRESETS.map(o =>
+    `<button type="button" class="occasion-btn" data-occasion="${o.id}">${o.label}</button>`
+  ).join("");
+}
+
 // --- Suggest Outfits ---
-el.suggestBtn.addEventListener("click", async () => {
-  const anchors = selectedList();
+async function runSuggestFlow(anchors, occasion){
   el.suggestBackdrop.hidden = false;
   el.suggestList.innerHTML = "";
+  const occasionLabel = occasion ? occasion.label.replace(/^\S+\s/, "") : null; // drop the emoji for status text
   el.suggestStatus.textContent = anchors.length
-    ? `Researching styles for ${anchors.map(a => a.name).join(", ")}…`
-    : "Researching a few outfit ideas…";
+    ? `Researching ${occasionLabel ? occasionLabel.toLowerCase() + " " : ""}ideas for ${anchors.map(a => a.name).join(", ")}…`
+    : occasionLabel
+      ? `Researching ${occasionLabel.toLowerCase()} ideas…`
+      : "Researching a few outfit ideas…";
 
   try{
-    const outfits = await suggestOutfits(anchors);
+    const outfits = await suggestOutfits(anchors, occasion);
     if (!outfits.length){
       el.suggestStatus.textContent = "Couldn't come up with anything — try adding a few more items to your closet first.";
       return;
@@ -525,6 +549,15 @@ el.suggestBtn.addEventListener("click", async () => {
     console.error("Outfit suggestion failed:", err);
     el.suggestStatus.textContent = "Something went wrong getting suggestions — check the console for details.";
   }
+}
+
+el.suggestBtn.addEventListener("click", () => runSuggestFlow(selectedList(), null));
+
+el.occasionBar.addEventListener("click", (e) => {
+  const btn = e.target.closest(".occasion-btn");
+  if (!btn) return;
+  const occasion = OCCASION_PRESETS.find(o => o.id === btn.dataset.occasion);
+  runSuggestFlow(selectedList(), occasion);
 });
 
 el.suggestClose.addEventListener("click", () => {
@@ -725,6 +758,7 @@ if ("serviceWorker" in navigator){
    INIT
    ========================================================================= */
 (async function init(){
+  renderOccasionBar();
   state.items = await dbGetAll();
   state.loaded = true;
   render();

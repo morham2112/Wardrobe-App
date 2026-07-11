@@ -324,6 +324,27 @@ main{ padding: 4px 18px 0; flex: 1; }
 .empty-sub{ font-size: 0.85rem; }
 
 /* ===== SUGGEST OUTFITS ===== */
+.occasion-bar{
+  display: flex;
+  gap: 8px;
+  padding: 0 18px 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.occasion-bar::-webkit-scrollbar{ display: none; }
+.occasion-btn{
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.occasion-btn:active{ transform: scale(0.96); }
+
 .suggest-bar{
   padding: 0 18px 12px;
 }
