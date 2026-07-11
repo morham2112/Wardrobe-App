@@ -7,10 +7,9 @@
    1. CONFIG               — flip MOCK_MODE off + add your Claude key
    2. STORAGE (IndexedDB)  — the "database" of clothes lives on your phone
    3. CLAUDE INTAKE        — one AI call per new photo -> structured tags
-   4. COLOR SCIENCE        — hex/name -> HSL, neutral detection, harmony
-   5. THE RULE ENGINE       — Rules A, B, C — this is the "brain"
-   6. STATE + RENDERING    — keeps the UI in sync with storage + selection
-   7. EVENT WIRING         — file intake, tabs, taps, modal
+   4. AI OUTFIT SUGGESTIONS — on-demand: research + compose real outfits
+   5. STATE + RENDERING    — keeps the UI in sync with storage + selection
+   6. EVENT WIRING         — file intake, tabs, taps, modal, suggestions
    ========================================================================= */
 
 
@@ -19,16 +18,20 @@
    ========================================================================= */
 const CONFIG = {
   // Set this to false once you've added a real Claude API key below.
-  // In MOCK_MODE the app invents plausible tags so you can test the UI
-  // and the filtering engine without spending API calls or being online.
-  MOCK_MODE: false,
+  // In MOCK_MODE the app invents plausible tags/outfits so you can test
+  // the UI without spending API calls or being online.
+  MOCK_MODE: true,
 
-  CLAUDE_API_KEY: "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",
+  CLAUDE_API_KEY: "YOUR_CLAUDE_API_KEY_HERE",
+
+  // Cheap/fast model for simple per-photo tagging.
   CLAUDE_MODEL: "claude-haiku-4-5-20251001",
 
-  // Neutral colors pair with everything (Rule A). Add to this list if
-  // Claude (or you) describe a color in a way that isn't caught below.
-  NEUTRAL_KEYWORDS: ["black","white","gray","grey","navy","tan","beige","cream","charcoal","khaki","stone","ivory"]
+  // Stronger model for actual outfit-composition reasoning — this is a
+  // harder judgment call than tagging a single photo, so it's worth the
+  // extra cost (still cheap in absolute terms since it only runs when you
+  // tap "Suggest Outfits", not on every tap).
+  SUGGEST_MODEL: "claude-sonnet-5"
 };
 
 // Single source of truth for categories — matches the tabs and the
@@ -172,7 +175,7 @@ app's styling rules. Use the tag_clothing_item tool to record your answer.`;
 }
 
 // Deterministic "fake AI" so the same filename always gets the same mock
-// tags — handy for testing the rule engine before you wire up a real key.
+// tags — handy for testing the app before you wire up a real key.
 function mockAnalyze(filename){
   const colors = [
     { name: "Navy",        hex: "#1B3A6B", tone: "Neutral" },
@@ -202,194 +205,155 @@ function mockAnalyze(filename){
 
 
 /* =========================================================================
-   4. COLOR SCIENCE
-   Converts any CSS-parseable color (hex or name) to HSL using a 1x1
-   canvas as the "parser", then implements neutral detection + the
-   color-wheel harmony test used by Rule A.
+   4. AI OUTFIT SUGGESTIONS
+   Runs only when you tap "Suggest Outfits" — not on every tap, since this
+   is a heavier, slower, costlier call than tagging a single photo.
+
+   Two Claude calls, on purpose:
+   1. RESEARCH — Claude uses the web_search tool to pull in a bit of
+      current men's style context relevant to what you're building around.
+   2. COMPOSE — a second call, forced into a structured tool response,
+      turns that research + your actual closet inventory into 3-4 real
+      outfits built ONLY from items you own (referenced by id).
+   Splitting these two steps is what lets Claude both browse the web AND
+   guarantee a clean, parseable answer — forcing structured output on the
+   first call would prevent it from searching at all.
    ========================================================================= */
-const _swatchCanvas = document.createElement("canvas");
-_swatchCanvas.width = 1; _swatchCanvas.height = 1;
-const _swatchCtx = _swatchCanvas.getContext("2d", { willReadFrequently: true });
-
-function colorToRGB(colorStr){
-  _swatchCtx.clearRect(0,0,1,1);
-  _swatchCtx.fillStyle = "#808080"; // neutral fallback if parsing fails
-  try{ _swatchCtx.fillStyle = colorStr; }catch(e){ /* keep fallback */ }
-  _swatchCtx.fillRect(0,0,1,1);
-  const [r,g,b] = _swatchCtx.getImageData(0,0,1,1).data;
-  return { r, g, b };
-}
-
-function rgbToHsl(r,g,b){
-  r/=255; g/=255; b/=255;
-  const max = Math.max(r,g,b), min = Math.min(r,g,b);
-  let h, s, l = (max+min)/2;
-  if (max === min){ h = 0; s = 0; }
-  else{
-    const d = max-min;
-    s = l > 0.5 ? d/(2-max-min) : d/(max+min);
-    switch(max){
-      case r: h = (g-b)/d + (g<b?6:0); break;
-      case g: h = (b-r)/d + 2; break;
-      default: h = (r-g)/d + 4;
-    }
-    h *= 60;
-  }
-  return { h, s: s*100, l: l*100 };
-}
-
-const _hslCache = new Map();
-function getHSL(colorStr){
-  if (!colorStr) return { h:0, s:0, l:50 };
-  if (_hslCache.has(colorStr)) return _hslCache.get(colorStr);
-  const { r,g,b } = colorToRGB(colorStr);
-  const hsl = rgbToHsl(r,g,b);
-  _hslCache.set(colorStr, hsl);
-  return hsl;
-}
-
-function hueDistance(h1, h2){
-  const d = Math.abs(h1 - h2);
-  return Math.min(d, 360 - d);
-}
-
-function isNeutralItem(item){
-  if (item.tone === "Neutral") return true;
-  const haystack = `${item.exact_color} ${item.name}`.toLowerCase();
-  if (CONFIG.NEUTRAL_KEYWORDS.some(k => haystack.includes(k))) return true;
-  const { s, l } = getHSL(item.exact_color);
-  if (s < 12) return true;        // near-grayscale
-  if (l > 92 || l < 8) return true; // near-white / near-black
-  return false;
-}
-
-// RULE A — color-wheel harmony. Neutrals pair with anything; otherwise
-// require a recognized relationship (monochromatic / analogous / complementary).
-function colorHarmony(a, b){
-  if (isNeutralItem(a) || isNeutralItem(b)) return { ok: true, type: "neutral" };
-  const hA = getHSL(a.exact_color).h;
-  const hB = getHSL(b.exact_color).h;
-  const d = hueDistance(hA, hB);
-
-  if (d <= 15)  return { ok: true, type: "monochromatic" };
-  if (d <= 50)  return { ok: true, type: "analogous" };
-  if (d >= 150 && d <= 210) return { ok: true, type: "complementary" };
-  return { ok: false, type: "clash" };
-}
-
-// RULE C — formality matching. "Casual" acts as the flexible middle
-// ground; Sport and Dressy only pair with each other through it.
-function formalityCompatible(a, b){
-  if (a.formality === b.formality) return true;
-  if (a.formality === "Casual" || b.formality === "Casual") return true;
-  return false;
-}
-
-
-/* =========================================================================
-   5. THE RULE ENGINE
-   Heuristics for shorts / socks / belts read the item's NAME (e.g. name
-   your photo "White No-Show Socks.jpg" or "Brown Leather Belt.jpg") since
-   the Claude schema doesn't include a sub-type field. Rename items in the
-   review modal any time to steer these checks.
-   ========================================================================= */
-const isShort      = item => /short/i.test(item.name);
-const isNoShowSock = item => /(no.?show|ankle|low|invisible|hidden)/i.test(item.name);
-const isHighSock   = item => /(crew|high|knee|tall|calf)/i.test(item.name);
-
-// RULE B — height elongation. Checks the candidate item against whatever
-// is currently selected (bottoms + shirt) to protect an unbroken vertical line.
-function heightElongation(selection, candidate){
-  const reasons = [];
-  let ok = true;
-
-  // Bottom -> Shoe: keep contrast low so the leg line isn't cut.
-  if (candidate.category === "Shoe" && selection.Bottom){
-    const bottom = selection.Bottom;
-    const sameTone = bottom.tone === candidate.tone;
-    const lDiff = Math.abs(getHSL(bottom.exact_color).l - getHSL(candidate.exact_color).l);
-    const lowContrast = sameTone || lDiff <= 25 || isNeutralItem(bottom) || isNeutralItem(candidate);
-    if (!lowContrast){
-      ok = false;
-      reasons.push("High contrast with bottoms breaks the leg line");
-    }
+async function suggestOutfits(anchorItems){
+  if (CONFIG.MOCK_MODE){
+    return mockSuggestOutfits(anchorItems);
   }
 
-  // Shorts -> socks: no-show/skin-tone only, high socks chop the leg.
-  if (candidate.category === "Sock" && selection.Bottom && isShort(selection.Bottom)){
-    if (isHighSock(candidate)){
-      ok = false;
-      reasons.push("High socks chop the leg line with shorts — try no-show");
-    }
-  }
+  const inventory = state.items.map(i => ({
+    id: i.id, name: i.name, category: i.category,
+    exact_color: i.exact_color, tone: i.tone, formality: i.formality
+  }));
 
-  // Belts: must match bottoms/shirt color, unless the shirt is casual/sport
-  // (and therefore likely worn untucked, so the belt is hidden anyway).
-  if (candidate.category === "Belt"){
-    const refs = [selection.Bottom, selection.Shirt].filter(Boolean);
-    if (refs.length){
-      const likelyUntucked = selection.Shirt && ["Casual","Sport"].includes(selection.Shirt.formality);
-      if (!likelyUntucked){
-        const matchesSomething = refs.some(ref =>
-          isNeutralItem(ref) || isNeutralItem(candidate) ||
-          hueDistance(getHSL(ref.exact_color).h, getHSL(candidate.exact_color).h) <= 20
-        );
-        if (!matchesSomething){
-          ok = false;
-          reasons.push("Belt should match shirt or bottoms, or shirt should be untucked");
+  const anchorDesc = anchorItems.length
+    ? anchorItems.map(i => `${i.name} (${i.category}, ${i.exact_color})`).join(", ")
+    : null;
+
+  // --- Call 1: research ---
+  const researchPrompt = anchorDesc
+    ? `I'm putting together an outfit built around: ${anchorDesc}. Briefly research current men's styling conventions relevant to these pieces — 2-3 sentences, this is just context for a follow-up step, not a final answer.`
+    : `I want a few complete men's outfit ideas for today, business-casual-or-more-relaxed. Briefly research current styling trends — 2-3 sentences, this is just context for a follow-up step, not a final answer.`;
+
+  const researchRes = await fetch(CLAUDE_API_URL, {
+    method: "POST",
+    headers: claudeHeaders(),
+    body: JSON.stringify({
+      model: CONFIG.SUGGEST_MODEL,
+      max_tokens: 500,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: researchPrompt }]
+    })
+  });
+  if (!researchRes.ok){
+    const errText = await researchRes.text().catch(() => "");
+    throw new Error(`Research call failed: ${researchRes.status} ${errText}`);
+  }
+  const researchData = await researchRes.json();
+  const trendSummary = (researchData.content || [])
+    .filter(block => block.type === "text")
+    .map(block => block.text)
+    .join(" ")
+    .trim() || "No specific trend research available.";
+
+  // --- Call 2: compose, forced structured output ---
+  const composePrompt = `Current style context: ${trendSummary}
+
+My full closet inventory (JSON): ${JSON.stringify(inventory)}
+
+${anchorDesc ? `Build every outfit around these specific items (match by id): ${anchorItems.map(i => i.id).join(", ")}.` : ""}
+Using ONLY items from the inventory above — never invent an item, only reference the exact ids provided — propose 3 to 4 complete outfits. Pick at most one item per category per outfit. I'm a shorter man who is colorblind, so prioritize outfits with a clean, unbroken vertical line (monochromatic or low-contrast pairings work best) and safe, unambiguous color combinations. Give each outfit a one-sentence rationale. Use the propose_outfits tool to answer.`;
+
+  const composeRes = await fetch(CLAUDE_API_URL, {
+    method: "POST",
+    headers: claudeHeaders(),
+    body: JSON.stringify({
+      model: CONFIG.SUGGEST_MODEL,
+      max_tokens: 1000,
+      tools: [{
+        name: "propose_outfits",
+        description: "Record 3-4 complete outfit suggestions built from the given closet inventory.",
+        input_schema: {
+          type: "object",
+          properties: {
+            outfits: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  item_ids: { type: "array", items: { type: "string" }, description: "Inventory ids making up this outfit." },
+                  rationale: { type: "string" }
+                },
+                required: ["item_ids", "rationale"]
+              }
+            }
+          },
+          required: ["outfits"]
         }
-      }
-    }
+      }],
+      tool_choice: { type: "tool", name: "propose_outfits" },
+      messages: [{ role: "user", content: composePrompt }]
+    })
+  });
+  if (!composeRes.ok){
+    const errText = await composeRes.text().catch(() => "");
+    throw new Error(`Compose call failed: ${composeRes.status} ${errText}`);
+  }
+  const composeData = await composeRes.json();
+  const toolCall = composeData.content?.find(block => block.type === "tool_use");
+  if (!toolCall){
+    throw new Error("Claude didn't return outfit suggestions — check the response shape.");
   }
 
-  return { ok, reasons };
+  // Map ids back to real item objects, dropping anything hallucinated.
+  const byId = new Map(state.items.map(i => [i.id, i]));
+  return toolCall.input.outfits
+    .map(o => ({
+      rationale: o.rationale,
+      items: o.item_ids.map(id => byId.get(id)).filter(Boolean)
+    }))
+    .filter(o => o.items.length > 0);
 }
 
-// Master check: is `candidate` compatible with everything currently selected?
-// Only compares against OTHER categories (an item never locks its own category).
-// Every category is single-select now, so this is just "every selected item
-// in a different category" — no more special-casing a multi-select bucket.
-function evaluateCandidate(selection, candidate){
-  const refs = Object.entries(selection)
-    .filter(([cat, item]) => item && cat !== candidate.category)
-    .map(([, item]) => item);
+function claudeHeaders(){
+  return {
+    "content-type": "application/json",
+    "x-api-key": CONFIG.CLAUDE_API_KEY,
+    "anthropic-version": "2023-06-01",
+    "anthropic-dangerous-direct-browser-access": "true"
+  };
+}
 
-  if (refs.length === 0) return { locked: false, reasons: [], badges: [] };
+const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
 
-  let locked = false;
-  const reasons = [];
+// Mock version so the suggestion UI is testable without an API key —
+// just randomly assembles a few outfits from whatever's in the closet.
+function mockSuggestOutfits(anchorItems){
+  const byCategory = {};
+  CATEGORIES.forEach(cat => { byCategory[cat] = state.items.filter(i => i.category === cat); });
+  const anchorCats = new Set(anchorItems.map(i => i.category));
 
-  for (const ref of refs){
-    const color = colorHarmony(ref, candidate);
-    if (!color.ok){ locked = true; reasons.push(`Clashes with ${ref.name}`); }
-
-    if (!formalityCompatible(ref, candidate)){
-      locked = true;
-      reasons.push(`${candidate.formality} doesn't match ${ref.name}'s ${ref.formality} formality`);
+  const outfits = [];
+  for (let n = 0; n < 3; n++){
+    const items = [...anchorItems];
+    CATEGORIES.forEach(cat => {
+      if (anchorCats.has(cat)) return;
+      const pool = byCategory[cat];
+      if (pool.length) items.push(pool[(n + cat.length) % pool.length]);
+    });
+    if (items.length){
+      outfits.push({ items, rationale: "(Mock suggestion — turn off MOCK_MODE for real AI-composed outfits.)" });
     }
   }
-
-  const height = heightElongation(selection, candidate);
-  if (!height.ok){ locked = true; reasons.push(...height.reasons); }
-
-  // Cosmetic badges (never gate selection, just highlight great picks)
-  const badges = [];
-  if (!locked){
-    if (candidate.category === "Shoe" && selection.Bottom){
-      const sameTone = selection.Bottom.tone === candidate.tone;
-      if (sameTone) badges.push("elongate");
-    }
-    const allDarkNeutral = refs.length > 0 && refs.every(r => r.tone === "Dark" || isNeutralItem(r)) &&
-                            (candidate.tone === "Dark" || isNeutralItem(candidate));
-    if (allDarkNeutral) badges.push("mono");
-  }
-
-  return { locked, reasons, badges };
+  return outfits;
 }
 
 
 /* =========================================================================
-   6. STATE + RENDERING
+   5. STATE + RENDERING
    ========================================================================= */
 function emptySelection(){
   const sel = {};
@@ -412,6 +376,11 @@ const el = {
   outfitStrip: document.getElementById("outfitStrip"),
   outfitStripItems: document.getElementById("outfitStripItems"),
   clearOutfitBtn: document.getElementById("clearOutfitBtn"),
+  suggestBtn: document.getElementById("suggestOutfitsBtn"),
+  suggestBackdrop: document.getElementById("suggestBackdrop"),
+  suggestList: document.getElementById("suggestList"),
+  suggestStatus: document.getElementById("suggestStatus"),
+  suggestClose: document.getElementById("suggestClose"),
   fileInput: document.getElementById("fileInput"),
   addPhotosBtn: document.getElementById("addPhotosBtn"),
   modalBackdrop: document.getElementById("modalBackdrop"),
@@ -456,7 +425,7 @@ function updateStatusLine(){
   }
   el.statusLine.textContent = count === 0
     ? "Your closet is empty — tap + Add to get started"
-    : `${count} item${count === 1 ? "" : "s"} in your closet — tap anything to build an outfit`;
+    : `${count} item${count === 1 ? "" : "s"} in your closet`;
 }
 
 function renderGrid(){
@@ -467,8 +436,6 @@ function renderGrid(){
   el.grid.innerHTML = "";
   el.emptyState.hidden = state.items.length > 0;
 
-  const selection = state.selection;
-
   items.forEach(item => {
     const card = document.createElement("div");
     card.className = "item";
@@ -476,23 +443,12 @@ function renderGrid(){
     card.setAttribute("role", "button");
     card.setAttribute("tabindex", "0");
 
-    let locked = false, badges = [];
-    if (selectedList().length > 0 && !isSelected(item)){
-      const result = evaluateCandidate(selection, item);
-      locked = result.locked;
-      badges = result.badges;
-    }
-
     if (isSelected(item)) card.classList.add("selected");
-    if (locked) card.classList.add("locked");
-    if (badges.length) card.classList.add("recommended");
 
     card.innerHTML = `
       <button type="button" class="item-edit-btn" title="Edit ${escapeHtml(item.name)}">✎</button>
       <div class="item-photo-wrap">
         <img src="${item.imageData}" alt="${escapeHtml(item.name)}">
-        ${badges.includes("elongate") ? '<span class="badge elongate">Elongates</span>' : ""}
-        ${badges.includes("mono") ? '<span class="badge mono">Monochrome</span>' : ""}
       </div>
       <div class="item-name">${escapeHtml(item.name)}</div>
       <div class="item-meta">${item.formality} · ${item.tone}</div>
@@ -529,7 +485,7 @@ function escapeHtml(str){
 
 
 /* =========================================================================
-   7. EVENT WIRING
+   6. EVENT WIRING
    ========================================================================= */
 
 // --- Tabs ---
@@ -547,6 +503,55 @@ el.clearOutfitBtn.addEventListener("click", () => {
   state.selection = emptySelection();
   render();
 });
+
+// --- Suggest Outfits ---
+el.suggestBtn.addEventListener("click", async () => {
+  const anchors = selectedList();
+  el.suggestBackdrop.hidden = false;
+  el.suggestList.innerHTML = "";
+  el.suggestStatus.textContent = anchors.length
+    ? `Researching styles for ${anchors.map(a => a.name).join(", ")}…`
+    : "Researching a few outfit ideas…";
+
+  try{
+    const outfits = await suggestOutfits(anchors);
+    if (!outfits.length){
+      el.suggestStatus.textContent = "Couldn't come up with anything — try adding a few more items to your closet first.";
+      return;
+    }
+    el.suggestStatus.textContent = "";
+    renderSuggestions(outfits);
+  }catch(err){
+    console.error("Outfit suggestion failed:", err);
+    el.suggestStatus.textContent = "Something went wrong getting suggestions — check the console for details.";
+  }
+});
+
+el.suggestClose.addEventListener("click", () => {
+  el.suggestBackdrop.hidden = true;
+});
+
+function renderSuggestions(outfits){
+  el.suggestList.innerHTML = outfits.map((outfit, idx) => `
+    <div class="suggestion-card">
+      <div class="suggestion-thumbs">
+        ${outfit.items.map(i => `<img src="${i.imageData}" alt="${escapeHtml(i.name)}" title="${escapeHtml(i.name)}">`).join("")}
+      </div>
+      <p class="suggestion-rationale">${escapeHtml(outfit.rationale)}</p>
+      <button type="button" class="btn-primary suggestion-wear" data-idx="${idx}">Wear This</button>
+    </div>
+  `).join("");
+
+  el.suggestList.querySelectorAll(".suggestion-wear").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const outfit = outfits[Number(btn.dataset.idx)];
+      state.selection = emptySelection();
+      outfit.items.forEach(item => { state.selection[item.category] = item; });
+      el.suggestBackdrop.hidden = true;
+      render();
+    });
+  });
+}
 
 // --- Add photos (the "read the folder" intake) ---
 el.addPhotosBtn.addEventListener("click", () => el.fileInput.click());

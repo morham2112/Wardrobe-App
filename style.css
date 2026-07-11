@@ -323,6 +323,72 @@ main{ padding: 4px 18px 0; flex: 1; }
 .empty-state p{ margin: 4px 0; }
 .empty-sub{ font-size: 0.85rem; }
 
+/* ===== SUGGEST OUTFITS ===== */
+.suggest-bar{
+  padding: 0 18px 12px;
+}
+.btn-suggest{
+  width: 100%;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent);
+  background: linear-gradient(135deg, rgba(79,143,216,0.18), rgba(224,138,52,0.18));
+  color: var(--text);
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+.btn-suggest:active{ transform: scale(0.98); }
+
+.suggest-header{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.suggest-header h2{ margin: 0; font-size: 1.1rem; }
+.suggest-header .btn-secondary{ flex: none; padding: 8px 14px; }
+
+.suggest-status{
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  margin: 0 0 14px;
+}
+
+.suggest-list{
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.suggestion-card{
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+.suggestion-thumbs{
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.suggestion-thumbs img{
+  width: 56px; height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.suggestion-rationale{
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin: 0 0 12px;
+  line-height: 1.4;
+}
+.suggestion-wear{
+  width: 100%;
+  padding: 10px;
+}
+
 /* ===== LEGEND ===== */
 .legend{
   position: fixed;
@@ -331,10 +397,12 @@ main{ padding: 4px 18px 0; flex: 1; }
   border-top: 1px solid var(--border);
   padding: 10px 18px calc(10px + env(safe-area-inset-bottom));
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
-  gap: 18px;
+  gap: 8px 18px;
   font-size: 0.72rem;
   color: var(--text-dim);
+  text-align: center;
 }
 .legend-item{ display: flex; align-items: center; gap: 6px; }
 .swatch{
@@ -418,4 +486,3 @@ main{ padding: 4px 18px 0; flex: 1; }
   .modal{ animation: none; }
   .item{ transition: none; }
 }
-

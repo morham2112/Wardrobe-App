@@ -36,7 +36,7 @@
   <!-- Hidden native file input — this is the "read the folder" intake.
        Mobile browsers can't watch a folder in the background, so the user
        picks the new photo(s) from their clothes folder and the app takes it
-       from there (dedupes by filename, sends new ones to Gemini once). -->
+       from there (dedupes by filename, sends new ones to Claude once). -->
   <input type="file" id="fileInput" accept="image/*" multiple hidden>
 
   <!-- ===== FILTER TABS ===== -->
@@ -56,6 +56,11 @@
     <button id="clearOutfitBtn" class="btn-clear">Clear</button>
   </div>
 
+  <!-- ===== SUGGEST OUTFITS ===== -->
+  <div class="suggest-bar">
+    <button id="suggestOutfitsBtn" class="btn-suggest">✨ Suggest Outfits</button>
+  </div>
+
   <!-- ===== CLOTHES GRID ===== -->
   <main>
     <div class="grid" id="grid"></div>
@@ -65,16 +70,27 @@
     </div>
   </main>
 
-  <!-- ===== LEGEND (colorblind-safe key: icons + text, never color alone) ===== -->
+  <!-- ===== LEGEND ===== -->
   <footer class="legend">
     <span class="legend-item"><span class="swatch selected-demo"></span>Selected</span>
-    <span class="legend-item"><span class="swatch locked-demo"></span>Won't work</span>
-    <span class="legend-item"><span class="swatch best-demo">★</span>Great match</span>
+    <span class="legend-item">Tap an item (or a few) then <strong>Suggest Outfits</strong> for AI-composed looks</span>
   </footer>
 
 </div>
 
-<!-- ===== REVIEW / EDIT MODAL (shown after Gemini tags a new photo) ===== -->
+<!-- ===== OUTFIT SUGGESTIONS PANEL ===== -->
+<div class="modal-backdrop" id="suggestBackdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="suggestTitle">
+    <div class="suggest-header">
+      <h2 id="suggestTitle">Outfit Ideas</h2>
+      <button type="button" id="suggestClose" class="btn-secondary">Close</button>
+    </div>
+    <p id="suggestStatus" class="suggest-status"></p>
+    <div id="suggestList" class="suggest-list"></div>
+  </div>
+</div>
+
+<!-- ===== REVIEW / EDIT MODAL (shown after Claude tags a new photo) ===== -->
 <div class="modal-backdrop" id="modalBackdrop" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <h2 id="modalTitle">Confirm item details</h2>
