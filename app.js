@@ -20,9 +20,9 @@ const CONFIG = {
   // Set this to false once you've added a real Claude API key below.
   // In MOCK_MODE the app invents plausible tags/outfits so you can test
   // the UI without spending API calls or being online.
-  MOCK_MODE: false,
+  MOCK_MODE: true,
 
-  CLAUDE_API_KEY: "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",
+  CLAUDE_API_KEY: "YOUR_CLAUDE_API_KEY_HERE",
 
   // Cheap/fast model for simple per-photo tagging.
   CLAUDE_MODEL: "claude-haiku-4-5-20251001",
@@ -320,7 +320,7 @@ Using ONLY items from the inventory above — never invent an item, only referen
   const composeData = await composeRes.json();
   const toolCall = composeData.content?.find(block => block.type === "tool_use");
   if (!toolCall || !Array.isArray(toolCall.input?.outfits)){
-    console.error("Unexpected compose response:", composeData);
+    console.error("Unexpected compose response:", JSON.stringify(composeData, null, 2));
     throw new Error(
       composeData.stop_reason === "max_tokens"
         ? "Claude's response got cut off (too much output for the token limit) — try again."
