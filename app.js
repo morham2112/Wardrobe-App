@@ -20,9 +20,9 @@ const CONFIG = {
   // Set this to false once you've added a real Claude API key below.
   // In MOCK_MODE the app invents plausible tags/outfits so you can test
   // the UI without spending API calls or being online.
-  MOCK_MODE: false,
+  MOCK_MODE: true,
 
-  CLAUDE_API_KEY: "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",
+  CLAUDE_API_KEY: "YOUR_CLAUDE_API_KEY_HERE",
 
   // Cheap/fast model for simple per-photo tagging.
   CLAUDE_MODEL: "claude-haiku-4-5-20251001",
@@ -270,7 +270,7 @@ My full closet inventory (JSON): ${JSON.stringify(inventory)}
 
 ${occasionDesc ? `The goal is specifically ${occasionDesc}. Every outfit should fit that occasion.` : ""}
 ${anchorDesc ? `Build every outfit around these specific items (match by id): ${anchorItems.map(i => i.id).join(", ")}.` : ""}
-Using ONLY items from the inventory above — never invent an item, only reference the exact ids provided — propose 3 to 4 complete outfits. Pick at most one item per category per outfit. I'm a shorter man who is colorblind, so prioritize outfits with a clean, unbroken vertical line (monochromatic or low-contrast pairings work best) and safe, unambiguous color combinations. Give each outfit a one-sentence rationale. Use the propose_outfits tool to answer.`;
+Using ONLY items from the inventory above — never invent an item, only reference the exact ids provided — propose 3 to 4 complete outfits. Pick at most one item per category per outfit. Hat, Belt, and Sock are optional — include them where they genuinely add to the look, not in every single outfit by default, but don't systematically avoid them either (a hat or shorts shouldn't be treated as a last resort). Make the 3-4 outfits genuinely different from each other, not near-duplicates with one item swapped — vary bottom style (shorts vs. pants, where both exist), formality within the occasion, and use of optional categories across the set. I'm a shorter man who is colorblind, so prioritize outfits with a clean, unbroken vertical line (monochromatic or low-contrast pairings work best) and safe, unambiguous color combinations. Give each outfit a one-sentence rationale. Use the propose_outfits tool to answer.`;
 
   const composeRes = await fetch(CLAUDE_API_URL, {
     method: "POST",
@@ -329,7 +329,7 @@ const OCCASION_PRESETS = [
   { id: "golf-shorts", label: "⛳ Golf (Shorts)", hint: "a golf outfit using golf shorts (not pants) as the bottom, with appropriate golf-style top, shoes, and accessories" },
   { id: "golf-pants",  label: "⛳ Golf (Pants)",  hint: "a golf outfit using golf pants (not shorts) as the bottom, with appropriate golf-style top, shoes, and accessories" },
   { id: "business",    label: "💼 Business Casual", hint: "a business casual outfit suitable for an office that isn't full formal" },
-  { id: "casual",      label: "👕 Casual",         hint: "a relaxed, everyday casual outfit" },
+  { id: "casual",      label: "👕 Casual",         hint: "a relaxed, everyday casual outfit — shorts are completely fair game as the bottom if the vibe fits, and a hat is welcome too, not just reserved for golf" },
   { id: "dinner",      label: "🍽️ Nice Dinner",   hint: "a polished outfit appropriate for a nice dinner out, dressier than casual but not black-tie" }
 ];
 
