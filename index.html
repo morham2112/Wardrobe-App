@@ -53,6 +53,7 @@
   <!-- ===== ACTIVE OUTFIT STRIP ===== -->
   <div class="outfit-strip" id="outfitStrip" hidden>
     <div class="outfit-strip-items" id="outfitStripItems"></div>
+    <button id="saveOutfitBtn" class="btn-clear" title="Save this combination to your vault">☆ Save</button>
     <button id="clearOutfitBtn" class="btn-clear">Clear</button>
   </div>
 
@@ -60,6 +61,7 @@
   <nav class="occasion-bar" id="occasionBar" aria-label="Quick outfit occasions"></nav>
   <div class="suggest-bar">
     <button id="suggestOutfitsBtn" class="btn-suggest">✨ Suggest Outfits</button>
+    <button id="viewVaultBtn" class="btn-vault">☆ My Outfits (<span id="vaultCount">0</span>)</button>
   </div>
 
   <!-- ===== CLOTHES GRID ===== -->
@@ -88,6 +90,18 @@
     </div>
     <p id="suggestStatus" class="suggest-status"></p>
     <div id="suggestList" class="suggest-list"></div>
+  </div>
+</div>
+
+<!-- ===== SAVED OUTFITS (VAULT) PANEL ===== -->
+<div class="modal-backdrop" id="vaultBackdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="vaultTitle">
+    <div class="suggest-header">
+      <h2 id="vaultTitle">My Outfits</h2>
+      <button type="button" id="vaultClose" class="btn-secondary">Close</button>
+    </div>
+    <p id="vaultStatus" class="suggest-status">No saved outfits yet — save one from a suggestion, or from the outfit strip when you've hand-picked one.</p>
+    <div id="vaultList" class="suggest-list"></div>
   </div>
 </div>
 

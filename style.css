@@ -347,9 +347,11 @@ main{ padding: 4px 18px 0; flex: 1; }
 
 .suggest-bar{
   padding: 0 18px 12px;
+  display: flex;
+  gap: 8px;
 }
 .btn-suggest{
-  width: 100%;
+  flex: 1;
   padding: 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--accent);
@@ -359,6 +361,35 @@ main{ padding: 4px 18px 0; flex: 1; }
   font-size: 0.92rem;
 }
 .btn-suggest:active{ transform: scale(0.98); }
+
+.btn-vault{
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.btn-vault:active{ transform: scale(0.98); }
+
+.vault-name{
+  font-weight: 700;
+  font-size: 0.95rem;
+  margin: 0 0 8px;
+}
+.vault-actions{
+  display: flex;
+  gap: 8px;
+}
+.vault-actions .btn-primary,
+.vault-actions .btn-secondary,
+.vault-actions .btn-danger{
+  flex: 1;
+  padding: 10px;
+}
 
 .suggest-header{
   display: flex;

@@ -20,9 +20,9 @@ const CONFIG = {
   // Set this to false once you've added a real Claude API key below.
   // In MOCK_MODE the app invents plausible tags/outfits so you can test
   // the UI without spending API calls or being online.
-  MOCK_MODE: false,
+  MOCK_MODE: true,
 
-  CLAUDE_API_KEY: "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",
+  CLAUDE_API_KEY: "YOUR_CLAUDE_API_KEY_HERE",
 
   // Cheap/fast model for simple per-photo tagging.
   CLAUDE_MODEL: "claude-haiku-4-5-20251001",
@@ -44,21 +44,30 @@ const CATEGORIES = ["Hat","Shirt","Bottom","Belt","Sock","Shoe"];
    2. STORAGE — a tiny IndexedDB wrapper.
    Each clothing item is stored as:
    { id, filename, name, category, exact_color, tone, formality, imageData, dateAdded }
-   imageData is a base64 data-URL, so photos are self-contained — nothing
-   ever leaves your phone unless you turn MOCK_MODE off to call Claude.
+   Each saved outfit (the "vault") is stored as:
+   { id, name, item_ids: [...ids into the clothes store], rationale, dateSaved }
+   Outfits reference items by id rather than copying them, so editing an
+   item's tags updates it everywhere automatically. imageData is a base64
+   data-URL, so photos are self-contained — nothing ever leaves your phone
+   unless you turn MOCK_MODE off to call Claude.
    ========================================================================= */
 const DB_NAME = "outfit-line";
 const STORE = "clothes";
+const STORE_OUTFITS = "outfits";
+const DB_VERSION = 2;
 let dbPromise = null;
 
 function openDB(){
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE)){
         db.createObjectStore(STORE, { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains(STORE_OUTFITS)){
+        db.createObjectStore(STORE_OUTFITS, { keyPath: "id" });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -67,31 +76,31 @@ function openDB(){
   return dbPromise;
 }
 
-async function dbGetAll(){
+async function dbGetAll(storeName = STORE){
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readonly");
-    const req = tx.objectStore(STORE).getAll();
+    const tx = db.transaction(storeName, "readonly");
+    const req = tx.objectStore(storeName).getAll();
     req.onsuccess = () => resolve(req.result || []);
     req.onerror = () => reject(req.error);
   });
 }
 
-async function dbPut(item){
+async function dbPut(item, storeName = STORE){
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).put(item);
+    const tx = db.transaction(storeName, "readwrite");
+    tx.objectStore(storeName).put(item);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 }
 
-async function dbDelete(id){
+async function dbDelete(id, storeName = STORE){
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).delete(id);
+    const tx = db.transaction(storeName, "readwrite");
+    tx.objectStore(storeName).delete(id);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -378,6 +387,7 @@ function emptySelection(){
 
 const state = {
   items: [],
+  outfits: [],
   loaded: false,
   activeTab: "All",
   selection: emptySelection()
@@ -393,6 +403,13 @@ const el = {
   clearOutfitBtn: document.getElementById("clearOutfitBtn"),
   suggestBtn: document.getElementById("suggestOutfitsBtn"),
   occasionBar: document.getElementById("occasionBar"),
+  saveOutfitBtn: document.getElementById("saveOutfitBtn"),
+  vaultBtn: document.getElementById("viewVaultBtn"),
+  vaultCount: document.getElementById("vaultCount"),
+  vaultBackdrop: document.getElementById("vaultBackdrop"),
+  vaultStatus: document.getElementById("vaultStatus"),
+  vaultList: document.getElementById("vaultList"),
+  vaultClose: document.getElementById("vaultClose"),
   suggestBackdrop: document.getElementById("suggestBackdrop"),
   suggestList: document.getElementById("suggestList"),
   suggestStatus: document.getElementById("suggestStatus"),
@@ -493,6 +510,82 @@ function renderOutfitStrip(){
   `).join("");
 }
 
+/* ---- Outfit vault (saved favorites) ---- */
+async function saveOutfitToVault(items, rationale){
+  if (!items.length) return;
+  const defaultName = items.map(i => i.name).join(" + ");
+  const name = (prompt("Name this outfit:", defaultName) || defaultName).trim();
+  const outfit = {
+    id: `outfit-${Date.now()}`,
+    name,
+    item_ids: items.map(i => i.id),
+    rationale: rationale || "",
+    dateSaved: Date.now()
+  };
+  await dbPut(outfit, STORE_OUTFITS);
+  state.outfits.push(outfit);
+  updateVaultCount();
+}
+
+function resolveOutfitItems(outfit){
+  const byId = new Map(state.items.map(i => [i.id, i]));
+  return outfit.item_ids.map(id => byId.get(id)).filter(Boolean);
+}
+
+function updateVaultCount(){
+  el.vaultCount.textContent = state.outfits.length;
+}
+
+function renderVaultList(){
+  if (!state.outfits.length){
+    el.vaultStatus.hidden = false;
+    el.vaultList.innerHTML = "";
+    return;
+  }
+  el.vaultStatus.hidden = true;
+
+  el.vaultList.innerHTML = state.outfits.map((outfit, idx) => {
+    const items = resolveOutfitItems(outfit);
+    const missingCount = outfit.item_ids.length - items.length;
+    return `
+      <div class="suggestion-card">
+        <p class="vault-name">${escapeHtml(outfit.name)}</p>
+        <div class="suggestion-thumbs">
+          ${items.map(i => `<img src="${i.imageData}" alt="${escapeHtml(i.name)}" title="${escapeHtml(i.name)}">`).join("")}
+        </div>
+        ${outfit.rationale ? `<p class="suggestion-rationale">${escapeHtml(outfit.rationale)}</p>` : ""}
+        ${missingCount > 0 ? `<p class="suggestion-rationale">(${missingCount} item${missingCount === 1 ? "" : "s"} from this outfit were deleted from your closet)</p>` : ""}
+        <div class="vault-actions">
+          <button type="button" class="btn-primary vault-wear" data-idx="${idx}">Wear This</button>
+          <button type="button" class="btn-danger vault-delete" data-idx="${idx}">Delete</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  el.vaultList.querySelectorAll(".vault-wear").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const outfit = state.outfits[Number(btn.dataset.idx)];
+      const items = resolveOutfitItems(outfit);
+      state.selection = emptySelection();
+      items.forEach(item => { state.selection[item.category] = item; });
+      el.vaultBackdrop.hidden = true;
+      render();
+    });
+  });
+
+  el.vaultList.querySelectorAll(".vault-delete").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const outfit = state.outfits[Number(btn.dataset.idx)];
+      if (!confirm(`Remove "${outfit.name}" from your saved outfits?`)) return;
+      await dbDelete(outfit.id, STORE_OUTFITS);
+      state.outfits = state.outfits.filter(o => o.id !== outfit.id);
+      updateVaultCount();
+      renderVaultList();
+    });
+  });
+}
+
 function escapeHtml(str){
   const d = document.createElement("div");
   d.textContent = str ?? "";
@@ -518,6 +611,20 @@ el.tabs.addEventListener("click", (e) => {
 el.clearOutfitBtn.addEventListener("click", () => {
   state.selection = emptySelection();
   render();
+});
+
+// --- Save current selection to vault ---
+el.saveOutfitBtn.addEventListener("click", () => {
+  saveOutfitToVault(selectedList(), "");
+});
+
+// --- Outfit vault (view/close) ---
+el.vaultBtn.addEventListener("click", () => {
+  el.vaultBackdrop.hidden = false;
+  renderVaultList();
+});
+el.vaultClose.addEventListener("click", () => {
+  el.vaultBackdrop.hidden = true;
 });
 
 function renderOccasionBar(){
@@ -571,7 +678,10 @@ function renderSuggestions(outfits){
         ${outfit.items.map(i => `<img src="${i.imageData}" alt="${escapeHtml(i.name)}" title="${escapeHtml(i.name)}">`).join("")}
       </div>
       <p class="suggestion-rationale">${escapeHtml(outfit.rationale)}</p>
-      <button type="button" class="btn-primary suggestion-wear" data-idx="${idx}">Wear This</button>
+      <div class="vault-actions">
+        <button type="button" class="btn-primary suggestion-wear" data-idx="${idx}">Wear This</button>
+        <button type="button" class="btn-secondary suggestion-save" data-idx="${idx}" title="Save to My Outfits">☆ Save</button>
+      </div>
     </div>
   `).join("");
 
@@ -582,6 +692,15 @@ function renderSuggestions(outfits){
       outfit.items.forEach(item => { state.selection[item.category] = item; });
       el.suggestBackdrop.hidden = true;
       render();
+    });
+  });
+
+  el.suggestList.querySelectorAll(".suggestion-save").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const outfit = outfits[Number(btn.dataset.idx)];
+      await saveOutfitToVault(outfit.items, outfit.rationale);
+      btn.textContent = "✓ Saved";
+      btn.disabled = true;
     });
   });
 }
@@ -760,6 +879,8 @@ if ("serviceWorker" in navigator){
 (async function init(){
   renderOccasionBar();
   state.items = await dbGetAll();
+  state.outfits = await dbGetAll(STORE_OUTFITS);
   state.loaded = true;
+  updateVaultCount();
   render();
 })();
