@@ -20,9 +20,9 @@ const CONFIG = {
   // Set this to false once you've added a real Claude API key below.
   // In MOCK_MODE the app invents plausible tags/outfits so you can test
   // the UI without spending API calls or being online.
-  MOCK_MODE: false,
+  MOCK_MODE: true,
 
-  CLAUDE_API_KEY: "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",
+  CLAUDE_API_KEY: "YOUR_CLAUDE_API_KEY_HERE",
 
   // Cheap/fast model for simple per-photo tagging.
   CLAUDE_MODEL: "claude-haiku-4-5-20251001",
@@ -413,6 +413,7 @@ const el = {
   exportBtn: document.getElementById("exportBtn"),
   importBtn: document.getElementById("importBtn"),
   importInput: document.getElementById("importInput"),
+  compressBtn: document.getElementById("compressBtn"),
   suggestBackdrop: document.getElementById("suggestBackdrop"),
   suggestList: document.getElementById("suggestList"),
   suggestStatus: document.getElementById("suggestStatus"),
@@ -691,6 +692,31 @@ el.importInput.addEventListener("change", async (e) => {
   }
 });
 
+// --- One-time maintenance: re-compress photos added before compression existed ---
+el.compressBtn.addEventListener("click", async () => {
+  if (!state.items.length) return;
+  const ok = confirm(
+    `Re-compress all ${state.items.length} photo(s) to save space? This rewrites them in place — ` +
+    `export a backup first if you want to keep the originals untouched.`
+  );
+  if (!ok) return;
+
+  for (let i = 0; i < state.items.length; i++){
+    const item = state.items[i];
+    el.statusLine.textContent = `Compressing photo ${i + 1} of ${state.items.length}…`;
+    try{
+      item.imageData = await compressDataUrl(item.imageData);
+      await dbPut(item);
+    }catch(err){
+      console.error("Couldn't compress", item.name, err);
+    }
+  }
+
+  render();
+  el.statusLine.textContent = `Compressed ${state.items.length} photo(s)`;
+  setTimeout(updateStatusLine, 2500);
+});
+
 function renderOccasionBar(){
   el.occasionBar.innerHTML = OCCASION_PRESETS.map(o =>
     `<button type="button" class="occasion-btn" data-occasion="${o.id}">${o.label}</button>`
@@ -815,36 +841,42 @@ async function processNextInQueue(){
   openReviewModal(file, dataUrl, tags);
 }
 
-// Resizes + re-encodes every photo before it touches storage or the API.
-// Phone camera photos are often several MB; nothing here needs that much
-// detail. This caps the long edge at 1200px and re-encodes as JPEG —
-// smaller IndexedDB footprint, faster uploads, and slightly cheaper Claude
-// calls, with no visible quality loss for this use case.
+// Resizes + re-encodes an image (from an existing data-URL) down to a
+// max dimension and JPEG quality. Shared by both the new-photo intake
+// path and the one-time "compress existing photos" maintenance action.
+function compressDataUrl(dataUrl, maxDim = 1200, quality = 0.82){
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim){
+        if (width >= height){
+          height = Math.round(height * (maxDim / width));
+          width = maxDim;
+        } else {
+          width = Math.round(width * (maxDim / height));
+          height = maxDim;
+        }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => reject(new Error("Couldn't load that image."));
+    img.src = dataUrl;
+  });
+}
+
+// Resizes + re-encodes every NEW photo before it touches storage or the
+// API. Phone camera photos are often several MB; nothing here needs that
+// much detail — smaller IndexedDB footprint, faster uploads, and slightly
+// cheaper Claude calls, with no visible quality loss for this use case.
 function compressImage(file, maxDim = 1200, quality = 0.82){
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim){
-          if (width >= height){
-            height = Math.round(height * (maxDim / width));
-            width = maxDim;
-          } else {
-            width = Math.round(width * (maxDim / height));
-            height = maxDim;
-          }
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL("image/jpeg", quality));
-      };
-      img.onerror = () => reject(new Error("Couldn't load that image."));
-      img.src = reader.result;
-    };
+    reader.onload = () => compressDataUrl(reader.result, maxDim, quality).then(resolve, reject);
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
