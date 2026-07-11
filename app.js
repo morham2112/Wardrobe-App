@@ -20,9 +20,9 @@ const CONFIG = {
   // Set this to false once you've added a real Claude API key below.
   // In MOCK_MODE the app invents plausible tags/outfits so you can test
   // the UI without spending API calls or being online.
-  MOCK_MODE: false,
+  MOCK_MODE: true,
 
-  CLAUDE_API_KEY: "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",
+  CLAUDE_API_KEY: "YOUR_CLAUDE_API_KEY_HERE",
 
   // Cheap/fast model for simple per-photo tagging.
   CLAUDE_MODEL: "claude-haiku-4-5-20251001",
@@ -287,7 +287,7 @@ Using ONLY items from the inventory above — never invent an item, only referen
     headers: claudeHeaders(),
     body: JSON.stringify({
       model: CONFIG.SUGGEST_MODEL,
-      max_tokens: 1000,
+      max_tokens: 2500,
       tools: [{
         name: "propose_outfits",
         description: "Record 3-4 complete outfit suggestions built from the given closet inventory.",
@@ -319,8 +319,13 @@ Using ONLY items from the inventory above — never invent an item, only referen
   }
   const composeData = await composeRes.json();
   const toolCall = composeData.content?.find(block => block.type === "tool_use");
-  if (!toolCall){
-    throw new Error("Claude didn't return outfit suggestions — check the response shape.");
+  if (!toolCall || !Array.isArray(toolCall.input?.outfits)){
+    console.error("Unexpected compose response:", composeData);
+    throw new Error(
+      composeData.stop_reason === "max_tokens"
+        ? "Claude's response got cut off (too much output for the token limit) — try again."
+        : "Claude didn't return usable outfit suggestions — check the console for the raw response."
+    );
   }
 
   // Map ids back to real item objects, dropping anything hallucinated.
@@ -328,7 +333,7 @@ Using ONLY items from the inventory above — never invent an item, only referen
   return toolCall.input.outfits
     .map(o => ({
       rationale: o.rationale,
-      items: o.item_ids.map(id => byId.get(id)).filter(Boolean)
+      items: (o.item_ids || []).map(id => byId.get(id)).filter(Boolean)
     }))
     .filter(o => o.items.length > 0);
 }
