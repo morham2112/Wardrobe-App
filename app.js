@@ -20,9 +20,9 @@ const CONFIG = {
   // Set this to false once you've added a real Claude API key below.
   // In MOCK_MODE the app invents plausible tags/outfits so you can test
   // the UI without spending API calls or being online.
-  MOCK_MODE: false,
+  MOCK_MODE: true,
 
-  CLAUDE_API_KEY: "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",
+  CLAUDE_API_KEY: "YOUR_CLAUDE_API_KEY_HERE",
 
   // Cheap/fast model for simple per-photo tagging.
   CLAUDE_MODEL: "claude-haiku-4-5-20251001",
@@ -163,7 +163,7 @@ app's styling rules. Use the tag_clothing_item tool to record your answer.`;
       messages: [{
         role: "user",
         content: [
-          { type: "image", source: { type: "base64", media_type: file.type || "image/jpeg", data: base64 } },
+          { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64 } },
           { type: "text", text: prompt }
         ]
       }]
@@ -410,6 +410,9 @@ const el = {
   vaultStatus: document.getElementById("vaultStatus"),
   vaultList: document.getElementById("vaultList"),
   vaultClose: document.getElementById("vaultClose"),
+  exportBtn: document.getElementById("exportBtn"),
+  importBtn: document.getElementById("importBtn"),
+  importInput: document.getElementById("importInput"),
   suggestBackdrop: document.getElementById("suggestBackdrop"),
   suggestList: document.getElementById("suggestList"),
   suggestStatus: document.getElementById("suggestStatus"),
@@ -627,6 +630,67 @@ el.vaultClose.addEventListener("click", () => {
   el.vaultBackdrop.hidden = true;
 });
 
+// --- Backup: export/import everything as a plain JSON file ---
+// This is the safety net for exactly the kind of accidental data loss a
+// "clear site data" reset causes — export occasionally, and you can
+// restore (or move to another device) from the file at any time.
+el.exportBtn.addEventListener("click", () => {
+  const payload = {
+    app: "outfit-line",
+    exportedAt: new Date().toISOString(),
+    items: state.items,
+    outfits: state.outfits
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `outfit-line-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+});
+
+el.importBtn.addEventListener("click", () => el.importInput.click());
+
+el.importInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+
+  try{
+    const text = await file.text();
+    const payload = JSON.parse(text);
+    if (!Array.isArray(payload.items)){
+      throw new Error("That file doesn't look like an Outfit Line backup.");
+    }
+    const itemCount = payload.items.length;
+    const outfitCount = Array.isArray(payload.outfits) ? payload.outfits.length : 0;
+
+    const ok = confirm(
+      `Import ${itemCount} item${itemCount === 1 ? "" : "s"} and ${outfitCount} outfit${outfitCount === 1 ? "" : "s"}?\n\n` +
+      `This adds them to your current closet — anything with a matching id gets updated, everything else is added alongside what you already have. Nothing existing gets deleted.`
+    );
+    if (!ok) return;
+
+    for (const item of payload.items) await dbPut(item);
+    if (Array.isArray(payload.outfits)){
+      for (const outfit of payload.outfits) await dbPut(outfit, STORE_OUTFITS);
+    }
+
+    state.items = await dbGetAll();
+    state.outfits = await dbGetAll(STORE_OUTFITS);
+    updateVaultCount();
+    render();
+    el.statusLine.textContent = `Imported ${itemCount} item${itemCount === 1 ? "" : "s"} and ${outfitCount} outfit${outfitCount === 1 ? "" : "s"}`;
+    setTimeout(updateStatusLine, 2500);
+  }catch(err){
+    console.error("Import failed:", err);
+    alert("Couldn't import that file — check the console for details.");
+  }
+});
+
 function renderOccasionBar(){
   el.occasionBar.innerHTML = OCCASION_PRESETS.map(o =>
     `<button type="button" class="occasion-btn" data-occasion="${o.id}">${o.label}</button>`
@@ -734,7 +798,7 @@ async function processNextInQueue(){
   if (!file) { updateStatusLine(); return; }
 
   el.statusLine.textContent = `Analyzing ${file.name}…`;
-  const dataUrl = await fileToDataUrl(file);
+  const dataUrl = await compressImage(file);
 
   let tags;
   try{
@@ -751,10 +815,36 @@ async function processNextInQueue(){
   openReviewModal(file, dataUrl, tags);
 }
 
-function fileToDataUrl(file){
+// Resizes + re-encodes every photo before it touches storage or the API.
+// Phone camera photos are often several MB; nothing here needs that much
+// detail. This caps the long edge at 1200px and re-encodes as JPEG —
+// smaller IndexedDB footprint, faster uploads, and slightly cheaper Claude
+// calls, with no visible quality loss for this use case.
+function compressImage(file, maxDim = 1200, quality = 0.82){
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim){
+          if (width >= height){
+            height = Math.round(height * (maxDim / width));
+            width = maxDim;
+          } else {
+            width = Math.round(width * (maxDim / height));
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = () => reject(new Error("Couldn't load that image."));
+      img.src = reader.result;
+    };
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });

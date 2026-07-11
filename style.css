@@ -441,6 +441,24 @@ main{ padding: 4px 18px 0; flex: 1; }
   padding: 10px;
 }
 
+/* ===== BACKUP (EXPORT / IMPORT) ===== */
+.backup-bar{
+  display: flex;
+  gap: 8px;
+  padding: 0 18px 14px;
+}
+.btn-backup{
+  flex: 1;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.btn-backup:active{ transform: scale(0.98); }
+
 /* ===== LEGEND ===== */
 .legend{
   position: fixed;
