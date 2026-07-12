@@ -17,12 +17,17 @@
    1. CONFIG
    ========================================================================= */
 const CONFIG = {
-  // Set this to false once you've added a real Claude API key below.
-  // In MOCK_MODE the app invents plausible tags/outfits so you can test
-  // the UI without spending API calls or being online.
-  MOCK_MODE: false,
+  // Set this to false once your Cloudflare Worker proxy is deployed
+  // (see cloudflare-worker.js). In MOCK_MODE the app invents plausible
+  // tags/outfits so you can test the UI without spending API calls or
+  // being online.
+  MOCK_MODE: true,
 
-  CLAUDE_API_KEY: "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",
+  // The URL of your deployed Cloudflare Worker (something like
+  // "https://outfit-line-proxy.YOUR-SUBDOMAIN.workers.dev"). Your Claude
+  // API key lives ONLY as a secret on that worker — it is never stored
+  // here, never ships to the browser, and never sits in this public repo.
+  PROXY_URL: "YOUR_WORKER_URL_HERE",
 
   // Cheap/fast model for simple per-photo tagging.
   CLAUDE_MODEL: "claude-haiku-4-5-20251001",
@@ -114,11 +119,13 @@ async function dbDelete(id, storeName = STORE){
    formality) is guaranteed present — Claude can't skip one the way it
    could when just asked to write JSON as text.
 
-   ⚠️ Security note: calling the API directly from a client-side app means
-   your API key ships inside app.js. That's fine for a private tool only
-   you install on your own phone, but do NOT publish this app publicly
-   with a real key embedded — route it through a small server/proxy first
-   if you ever share it.
+   Security note: this calls CONFIG.PROXY_URL — a small Cloudflare Worker
+   (see cloudflare-worker.js) — instead of Anthropic directly. Your actual
+   API key lives only as a private secret on that worker; it never ships
+   to the browser and never sits in this public repo. If PROXY_URL ever
+   gets pointed straight at api.anthropic.com with a real key hardcoded
+   again, that key WILL get scraped from a public GitHub Pages site —
+   this happened once already, don't repeat it.
    ========================================================================= */
 async function analyzeClothingImage(file, dataUrl){
   if (CONFIG.MOCK_MODE){
@@ -133,14 +140,9 @@ specific about cut/style whenever it's visible (e.g. "shorts" vs "pants",
 "crew socks" vs "no-show socks") since that wording drives some of the
 app's styling rules. Use the tag_clothing_item tool to record your answer.`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch(CONFIG.PROXY_URL, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": CONFIG.CLAUDE_API_KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true"
-    },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
       model: CONFIG.CLAUDE_MODEL,
       max_tokens: 300,
@@ -257,7 +259,7 @@ async function suggestOutfits(anchorItems, occasion){
     body: JSON.stringify({
       model: CONFIG.SUGGEST_MODEL,
       max_tokens: 500,
-      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 }],
       messages: [{ role: "user", content: researchPrompt }]
     })
   });
@@ -349,15 +351,10 @@ const OCCASION_PRESETS = [
 ];
 
 function claudeHeaders(){
-  return {
-    "content-type": "application/json",
-    "x-api-key": CONFIG.CLAUDE_API_KEY,
-    "anthropic-version": "2023-06-01",
-    "anthropic-dangerous-direct-browser-access": "true"
-  };
+  return { "content-type": "application/json" };
 }
 
-const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
+const CLAUDE_API_URL = CONFIG.PROXY_URL;
 
 // Mock version so the suggestion UI is testable without an API key —
 // just randomly assembles a few outfits from whatever's in the closet.
