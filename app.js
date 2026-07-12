@@ -21,13 +21,13 @@ const CONFIG = {
   // (see cloudflare-worker.js). In MOCK_MODE the app invents plausible
   // tags/outfits so you can test the UI without spending API calls or
   // being online.
-  MOCK_MODE: false,
+  MOCK_MODE: true,
 
   // The URL of your deployed Cloudflare Worker (something like
   // "https://outfit-line-proxy.YOUR-SUBDOMAIN.workers.dev"). Your Claude
   // API key lives ONLY as a secret on that worker — it is never stored
   // here, never ships to the browser, and never sits in this public repo.
-  PROXY_URL: "https://outfit-line-proxy.morham.workers.dev/",
+  PROXY_URL: "YOUR_WORKER_URL_HERE",
 
   // Cheap/fast model for simple per-photo tagging.
   CLAUDE_MODEL: "claude-haiku-4-5-20251001",
@@ -321,7 +321,21 @@ Using ONLY items from the inventory above — never invent an item, only referen
   }
   const composeData = await composeRes.json();
   const toolCall = composeData.content?.find(block => block.type === "tool_use");
-  if (!toolCall || !Array.isArray(toolCall.input?.outfits)){
+
+  // Normally toolCall.input.outfits is already a clean array, matching the
+  // schema. Occasionally the model instead stuffs the whole answer into
+  // "outfits" as a JSON *string* (sometimes double-nested) — handle both.
+  let outfitsArray = toolCall?.input?.outfits;
+  if (typeof outfitsArray === "string"){
+    try{
+      const parsed = JSON.parse(outfitsArray);
+      outfitsArray = Array.isArray(parsed) ? parsed : parsed.outfits;
+    }catch(e){
+      outfitsArray = null;
+    }
+  }
+
+  if (!toolCall || !Array.isArray(outfitsArray)){
     console.error("Unexpected compose response:", JSON.stringify(composeData, null, 2));
     throw new Error(
       composeData.stop_reason === "max_tokens"
@@ -332,7 +346,7 @@ Using ONLY items from the inventory above — never invent an item, only referen
 
   // Map ids back to real item objects, dropping anything hallucinated.
   const byId = new Map(state.items.map(i => [i.id, i]));
-  return toolCall.input.outfits
+  return outfitsArray
     .map(o => ({
       rationale: o.rationale,
       items: (o.item_ids || []).map(id => byId.get(id)).filter(Boolean)
