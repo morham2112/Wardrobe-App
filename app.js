@@ -21,13 +21,13 @@ const CONFIG = {
   // (see cloudflare-worker.js). In MOCK_MODE the app invents plausible
   // tags/outfits so you can test the UI without spending API calls or
   // being online.
-  MOCK_MODE: false,
+  MOCK_MODE: true,
 
   // The URL of your deployed Cloudflare Worker (something like
   // "https://outfit-line-proxy.YOUR-SUBDOMAIN.workers.dev"). Your Claude
   // API key lives ONLY as a secret on that worker — it is never stored
   // here, never ships to the browser, and never sits in this public repo.
-  PROXY_URL: "https://outfit-line-proxy.morham.workers.dev/",
+  PROXY_URL: "YOUR_WORKER_URL_HERE",
 
   // Cheap/fast model for simple per-photo tagging.
   CLAUDE_MODEL: "claude-haiku-4-5-20251001",
@@ -230,9 +230,9 @@ function mockAnalyze(filename){
    guarantee a clean, parseable answer — forcing structured output on the
    first call would prevent it from searching at all.
    ========================================================================= */
-async function suggestOutfits(anchorItems, occasion){
+async function suggestOutfits(anchorItems, occasion, extraDetails){
   if (CONFIG.MOCK_MODE){
-    return mockSuggestOutfits(anchorItems);
+    return mockSuggestOutfits(anchorItems, occasion, extraDetails);
   }
 
   const inventory = state.items.map(i => ({
@@ -250,6 +250,7 @@ async function suggestOutfits(anchorItems, occasion){
   const researchPrompt = [
     occasionDesc ? `I want to put together ${occasionDesc}.` : "I want a few complete men's outfit ideas for today.",
     anchorDesc ? `It should be built around: ${anchorDesc}.` : "",
+    extraDetails ? `Additional context from me: ${extraDetails}.` : "",
     "Briefly research current men's styling conventions relevant to this — 2-3 sentences, this is just context for a follow-up step, not a final answer."
   ].filter(Boolean).join(" ");
 
@@ -281,6 +282,7 @@ My full closet inventory (JSON): ${JSON.stringify(inventory)}
 
 ${occasionDesc ? `The goal is specifically ${occasionDesc}. Every outfit should fit that occasion.` : ""}
 ${anchorDesc ? `Build every outfit around these specific items (match by id): ${anchorItems.map(i => i.id).join(", ")}.` : ""}
+${extraDetails ? `Additional context from me to factor into your choices: ${extraDetails}` : ""}
 An item's name often signals it's purpose-built for a specific activity (e.g. a name containing "golf," "running," "hiking") even though category/formality alone don't capture that — when the occasion matches, prefer that purpose-built item over a generic same-category alternative.
 Using ONLY items from the inventory above — never invent an item, only reference the exact ids provided — propose 3 to 4 complete outfits. Pick at most one item per category per outfit. Hat, Belt, and Sock are optional — include them where they genuinely add to the look, not in every single outfit by default, but don't systematically avoid them either (a hat or shorts shouldn't be treated as a last resort). Make the 3-4 outfits genuinely different from each other, not near-duplicates with one item swapped — vary bottom style (shorts vs. pants, where both exist), formality within the occasion, and use of optional categories across the set. I'm a shorter man who is colorblind, so prioritize outfits with a clean, unbroken vertical line (monochromatic or low-contrast pairings work best) and safe, unambiguous color combinations. Give each outfit a one-sentence rationale. Use the propose_outfits tool to answer.`;
 
@@ -372,7 +374,7 @@ const CLAUDE_API_URL = CONFIG.PROXY_URL;
 
 // Mock version so the suggestion UI is testable without an API key —
 // just randomly assembles a few outfits from whatever's in the closet.
-function mockSuggestOutfits(anchorItems, occasion){
+function mockSuggestOutfits(anchorItems, occasion, extraDetails){
   const byCategory = {};
   CATEGORIES.forEach(cat => { byCategory[cat] = state.items.filter(i => i.category === cat); });
   const anchorCats = new Set(anchorItems.map(i => i.category));
@@ -741,7 +743,7 @@ function renderOccasionBar(){
 }
 
 // --- Suggest Outfits ---
-async function runSuggestFlow(anchors, occasion){
+async function runSuggestFlow(anchors, occasion, extraDetails){
   el.suggestBackdrop.hidden = false;
   el.suggestList.innerHTML = "";
   const occasionLabel = occasion ? occasion.label.replace(/^\S+\s/, "") : null; // drop the emoji for status text
@@ -752,7 +754,7 @@ async function runSuggestFlow(anchors, occasion){
       : "Researching a few outfit ideas…";
 
   try{
-    const outfits = await suggestOutfits(anchors, occasion);
+    const outfits = await suggestOutfits(anchors, occasion, extraDetails);
     if (!outfits.length){
       el.suggestStatus.textContent = "Couldn't come up with anything — try adding a few more items to your closet first.";
       return;
@@ -765,13 +767,22 @@ async function runSuggestFlow(anchors, occasion){
   }
 }
 
-el.suggestBtn.addEventListener("click", () => runSuggestFlow(selectedList(), null));
+// A quick optional prompt before every suggestion request — e.g. "hot day,
+// include a hat." Empty/cancelled just means no extra context, not an error.
+function askForExtraDetails(){
+  const details = prompt('Any additional details for this outfit? (optional — e.g. "hot day, include a hat")', "");
+  return (details || "").trim();
+}
+
+el.suggestBtn.addEventListener("click", () => {
+  runSuggestFlow(selectedList(), null, askForExtraDetails());
+});
 
 el.occasionBar.addEventListener("click", (e) => {
   const btn = e.target.closest(".occasion-btn");
   if (!btn) return;
   const occasion = OCCASION_PRESETS.find(o => o.id === btn.dataset.occasion);
-  runSuggestFlow(selectedList(), occasion);
+  runSuggestFlow(selectedList(), occasion, askForExtraDetails());
 });
 
 el.suggestClose.addEventListener("click", () => {
