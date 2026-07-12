@@ -21,13 +21,13 @@ const CONFIG = {
   // (see cloudflare-worker.js). In MOCK_MODE the app invents plausible
   // tags/outfits so you can test the UI without spending API calls or
   // being online.
-  MOCK_MODE: true,
+  MOCK_MODE: false,
 
   // The URL of your deployed Cloudflare Worker (something like
   // "https://outfit-line-proxy.YOUR-SUBDOMAIN.workers.dev"). Your Claude
   // API key lives ONLY as a secret on that worker — it is never stored
   // here, never ships to the browser, and never sits in this public repo.
-  PROXY_URL: "YOUR_WORKER_URL_HERE",
+  PROXY_URL: "https://outfit-line-proxy.morham.workers.dev/",
 
   // Cheap/fast model for simple per-photo tagging.
   CLAUDE_MODEL: "claude-haiku-4-5-20251001",
